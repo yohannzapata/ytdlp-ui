@@ -1,12 +1,16 @@
 name: Release
 
 # Builds installers for Windows, macOS and Linux and attaches them to a GitHub release.
-# Start it by pushing a version tag, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+#
+# To publish a new version:
+#   1. Bump "version" in package.json, src-tauri/Cargo.toml and src-tauri/tauri.conf.json, commit and push.
+#   2. Create the release yourself, which starts this workflow:
+#        gh release create v0.2.0 --title "ytdlp-ui v0.2.0" --generate-notes
+#
+# The release itself is created by you (not by this workflow), so it is published under your name.
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+  release:
+    types: [created]
 
 permissions:
   contents: write
@@ -55,9 +59,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "ytdlp-ui ${{ github.ref_name }}"
-          releaseBody: "Download the installer for your system below. See the README for details."
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ github.event.release.id }}
           args: ${{ matrix.args }}

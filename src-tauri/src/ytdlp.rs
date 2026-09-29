@@ -4,6 +4,7 @@
 //! make it write machine-readable lines (prefixed with `@@`) that are parsed here
 //! and forwarded to the UI as `download` events.
 
+use crate::settings::DownloadOptions;
 use crate::tools::{self, Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -201,9 +202,10 @@ fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub async fn fetch_info(app: AppHandle, url: String) -> Result<MediaInfo, String> {
+pub async fn fetch_info(app: AppHandle, url: String, cookies_browser: Option<String>) -> Result<MediaInfo, String> {
     let output = tools::command(&ytdlp_path(&app)?)
         .args(base_args(&app))
+        .args(cookies_args(cookies_browser.as_deref().unwrap_or_default()))
         .args(["-J", "--flat-playlist", "--no-warnings", "--", &url])
         .stdin(Stdio::null())
         .output()
@@ -236,6 +238,7 @@ pub struct DownloadRequest {
     folder: String,
     /// Playlist downloads go into a folder named after the playlist.
     subfolder: Option<String>,
+    options: DownloadOptions,
 }
 
 #[derive(Serialize, Clone)]
@@ -281,7 +284,7 @@ fn format_args(req: &DownloadRequest) -> Vec<String> {
             "opus" => "ba[acodec=opus]/ba/b",
             _ => "ba/b",
         };
-        return ["-f", selector, "-x", "--audio-format", format, "--audio-quality", "0", "--embed-thumbnail"]
+        return ["-f", selector, "-x", "--audio-format", format, "--audio-quality", "0"]
             .map(String::from)
             .to_vec();
     }
@@ -312,7 +315,76 @@ fn safe_folder_name(name: &str) -> String {
     if cleaned.is_empty() { "Playlist".into() } else { cleaned.chars().take(120).collect() }
 }
 
-fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Vec<String> {
+const COOKIE_BROWSERS: [&str; 8] = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"];
+
+fn cookies_args(browser: &str) -> Vec<String> {
+    if COOKIE_BROWSERS.contains(&browser) {
+        vec!["--cookies-from-browser".into(), browser.into()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// "2.5" + "M" -> "2.5M". Empty, zero or nonsense means no limit.
+fn rate_limit(o: &DownloadOptions) -> Option<String> {
+    let value: f64 = o.rate_limit_value.trim().replace(',', ".").parse().ok()?;
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some(format!("{value}{}", if o.rate_limit_unit == "K" { 'K' } else { 'M' }))
+}
+
+/// yt-dlp arguments for the user's options. Custom arguments come last so they can override the rest.
+fn option_args(req: &DownloadRequest) -> Result<Vec<String>, String> {
+    let o = &req.options;
+    let mut a: Vec<String> = Vec::new();
+    let mut add = |args: &[&str]| a.extend(args.iter().map(|s| s.to_string()));
+
+    if let Some(limit) = rate_limit(o) {
+        add(&["-r", &limit]);
+    }
+    if o.set_file_time_now {
+        add(&["--no-mtime"]);
+    }
+    if o.embed_metadata {
+        add(&["--embed-metadata"]);
+    }
+    match o.chapters.as_str() {
+        "split" => {
+            add(&["--split-chapters", "-o", "chapter:%(title)s - %(section_number)03d %(section_title)s.%(ext)s"]);
+            if o.force_keyframes {
+                add(&["--force-keyframes-at-cuts"]);
+            }
+        }
+        "ignore" => add(&["--no-embed-chapters"]),
+        // Embedding chapters is part of --embed-metadata.
+        _ if !o.embed_metadata => add(&["--embed-chapters"]),
+        _ => {}
+    }
+    if !req.audio_only && o.subtitles != "off" {
+        let langs = o.subtitle_langs.trim();
+        add(&["--write-subs", "--write-auto-subs", "--sub-langs", if langs.is_empty() { "en" } else { langs }]);
+        if o.subtitles == "embed" {
+            add(&["--embed-subs"]);
+        } else {
+            add(&["--convert-subs", "srt"]);
+        }
+    }
+    // WebM can't hold cover art; yt-dlp would fail the whole download.
+    if o.embed_thumbnail && (req.audio_only || matches!(req.format.as_str(), "mp4" | "mkv")) {
+        add(&["--embed-thumbnail"]);
+    }
+    if o.sponsorblock {
+        add(&["--sponsorblock-remove", "sponsor"]);
+    }
+    a.extend(cookies_args(&o.cookies_browser));
+    if o.custom_args_enabled && !o.custom_args.trim().is_empty() {
+        a.extend(shell_words::split(&o.custom_args).map_err(|e| format!("Custom arguments: {e}"))?);
+    }
+    Ok(a)
+}
+
+fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Result<Vec<String>, String> {
     let mut args = base_args(app);
     args.extend(
         [
@@ -321,8 +393,6 @@ fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Vec<
             "--progress",
             "--progress-delta",
             "0.5",
-            "--no-mtime",
-            "--embed-metadata",
             "--progress-template",
             r#"download:@@P {"p":%(progress)j,"f":%(info.format_id)j}"#,
             "--progress-template",
@@ -333,15 +403,10 @@ fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Vec<
         .map(String::from),
     );
     args.extend(format_args(req));
-    args.extend([
-        "-P".into(),
-        staging.display().to_string(),
-        "-o".into(),
-        "%(title)s.%(ext)s".into(),
-        "--".into(),
-        req.url.clone(),
-    ]);
-    args
+    args.extend(["-P".into(), staging.display().to_string(), "-o".into(), "%(title)s.%(ext)s".into()]);
+    args.extend(option_args(req)?);
+    args.extend(["--".into(), req.url.clone()]);
+    Ok(args)
 }
 
 // Each download runs in its own hidden folder next to the destination and is moved into place
@@ -364,19 +429,72 @@ fn staging_dir(folder: &Path, id: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Moves `file` into `dir`, adding " (1)", " (2)"… when the name is taken, like a browser does.
-fn move_unique(file: &Path, dir: &Path) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-    let ext = file.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-    let mut target = dir.join(format!("{stem}{ext}"));
+/// Partial and scratch files yt-dlp leaves in the folder while it works.
+fn is_temporary(name: &str) -> bool {
+    [".part", ".ytdl", ".temp", ".tmp"].iter().any(|ext| name.ends_with(ext)) || name.contains(".part-")
+}
+
+/// Where `name` can go in `dir` without replacing anything: "Title.mp4", then "Title (1).mp4", ...
+fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let path = Path::new(name);
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let mut target = dir.join(name);
     let mut n = 1;
     while target.exists() {
         target = dir.join(format!("{stem} ({n}){ext}"));
         n += 1;
     }
-    std::fs::rename(file, &target)?;
-    Ok(target)
+    target
+}
+
+/// Moves everything a download produced (the video, subtitle files, split chapters...) from `staging` into
+/// `dir` and returns the new path of `main`. Taken names get " (1)", " (2)"... like a browser does; a video and
+/// its sidecar files (`Title.mp4`, `Title.en.srt`) always get the same number so they stay paired.
+fn move_results(main: &Path, staging: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let main_name = main.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let stem = main.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+    let main_rest = main_name[stem.len()..].to_string();
+
+    let mut paired: Vec<(String, PathBuf)> = Vec::new(); // (text after the stem, file)
+    let mut others: Vec<(String, PathBuf)> = Vec::new(); // (file name, file)
+    for entry in std::fs::read_dir(staging)?.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !path.is_file() || is_temporary(&name) {
+            continue;
+        }
+        match name.strip_prefix(stem.as_str()).filter(|rest| rest.starts_with('.')) {
+            Some(rest) => paired.push((rest.to_string(), path)),
+            None => others.push((name, path)),
+        }
+    }
+    let main_exists = paired.iter().any(|(_, path)| path == main) || main.is_file();
+    if main_exists && !paired.iter().any(|(_, path)| path == main) {
+        paired.push((main_rest.clone(), main.to_path_buf())); // it lives outside the staging folder
+    }
+
+    let named = |n: u32| if n == 0 { stem.clone() } else { format!("{stem} ({n})") };
+    let mut n = 0;
+    while paired.iter().any(|(rest, _)| dir.join(format!("{}{rest}", named(n))).exists()) {
+        n += 1;
+    }
+    for (rest, path) in &paired {
+        std::fs::rename(path, dir.join(format!("{}{rest}", named(n))))?;
+    }
+    let mut moved_others = Vec::new();
+    for (name, path) in &others {
+        let target = unique_path(dir, name);
+        std::fs::rename(path, &target)?;
+        moved_others.push(target);
+    }
+    // Normally the file yt-dlp reported; if it isn't there, whatever else came out (split chapters).
+    Ok(if main_exists {
+        dir.join(format!("{}{main_rest}", named(n)))
+    } else {
+        moved_others.into_iter().next().unwrap_or_else(|| dir.to_path_buf())
+    })
 }
 
 /// Removes a job's staging folder. Windows can hold files open briefly after a process is killed.
@@ -404,9 +522,16 @@ pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, req: Download
     };
     let ytdlp = ytdlp_path(&app)?;
     let staging = staging_dir(&folder, &req.id)?;
+    let args = match download_args(&app, &req, &staging) {
+        Ok(args) => args,
+        Err(e) => {
+            remove_staging(&staging);
+            return Err(e);
+        }
+    };
 
     let spawned = tools::command(&ytdlp)
-        .args(download_args(&app, &req, &staging))
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -444,7 +569,7 @@ pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, req: Download
 
         let result = match (canceled, success, parser.filepath) {
             (true, _, _) => Err(None),
-            (false, true, Some(file)) => move_unique(Path::new(&file), &destination)
+            (false, true, Some(file)) => move_results(Path::new(&file), &staging, &destination)
                 .map(|path| path.display().to_string())
                 .map_err(|e| Some(format!("Couldn't save the file: {e}"))),
             (false, true, None) => Err(Some("yt-dlp didn't report the downloaded file".into())),
@@ -607,17 +732,86 @@ mod tests {
         assert_eq!(parser.filepath.as_deref(), Some(r"C:\Videos\a.mp4"));
     }
 
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ytdlp-ui-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
-    fn moving_never_overwrites() {
-        let dir = std::env::temp_dir().join(format!("ytdlp-ui-test-{}", std::process::id()));
-        let (src, dest) = (dir.join("src"), dir.join("dest"));
-        std::fs::create_dir_all(&src).unwrap();
-        for expected in ["a.mp4", "a (1).mp4", "a (2).mp4"] {
-            std::fs::write(src.join("a.mp4"), expected).unwrap();
-            let moved = move_unique(&src.join("a.mp4"), &dest).unwrap();
-            assert_eq!(moved.file_name().unwrap(), expected);
+    fn moving_keeps_files_paired_and_never_overwrites() {
+        let root = scratch_dir("move");
+        let (staging, dest) = (root.join("staging"), root.join("dest"));
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("a.mp4"), "old").unwrap();
+        for name in ["a.mp4", "a.en.srt", "a - 001 Intro.mp4", "b.mp4.part"] {
+            std::fs::write(staging.join(name), name).unwrap();
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+
+        let moved = move_results(&staging.join("a.mp4"), &staging, &dest).unwrap();
+        assert_eq!(moved, dest.join("a (1).mp4"));
+        assert_eq!(std::fs::read_to_string(dest.join("a.mp4")).unwrap(), "old");
+        assert!(dest.join("a (1).en.srt").exists(), "subtitles share the video's number");
+        assert!(dest.join("a - 001 Intro.mp4").exists());
+        assert!(staging.join("b.mp4.part").exists(), "partial files stay behind");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn request(audio_only: bool, format: &str, options: DownloadOptions) -> DownloadRequest {
+        DownloadRequest {
+            id: "1".into(),
+            url: "https://example.com/v".into(),
+            audio_only,
+            max_height: None,
+            format: format.into(),
+            folder: String::new(),
+            subfolder: None,
+            options,
+        }
+    }
+
+    #[test]
+    fn options_become_arguments() {
+        let o = DownloadOptions {
+            rate_limit_value: "2,5".into(),
+            rate_limit_unit: "M".into(),
+            subtitles: "embed".into(),
+            subtitle_langs: "en,de".into(),
+            chapters: "split".into(),
+            force_keyframes: true,
+            sponsorblock: true,
+            cookies_browser: "firefox".into(),
+            custom_args_enabled: true,
+            custom_args: r#"--proxy "http://a b:1""#.into(),
+            ..DownloadOptions::default()
+        };
+        let args = option_args(&request(false, "mp4", o)).unwrap();
+        let has = |pair: &[&str]| args.windows(pair.len()).any(|w| w == pair);
+        assert!(has(&["-r", "2.5M"]));
+        assert!(has(&["--sub-langs", "en,de"]) && args.contains(&"--embed-subs".to_string()));
+        assert!(args.contains(&"--split-chapters".to_string()) && args.contains(&"--force-keyframes-at-cuts".to_string()));
+        assert!(has(&["--sponsorblock-remove", "sponsor"]));
+        assert!(has(&["--cookies-from-browser", "firefox"]));
+        assert!(args.contains(&"--embed-thumbnail".to_string()));
+        assert_eq!(&args[args.len() - 2..], ["--proxy", "http://a b:1"], "custom arguments come last, kept whole inside quotes");
+    }
+
+    #[test]
+    fn options_respect_the_format() {
+        let o = DownloadOptions { subtitles: "embed".into(), ..DownloadOptions::default() };
+        let webm = option_args(&request(false, "webm", o.clone())).unwrap();
+        assert!(!webm.contains(&"--embed-thumbnail".to_string()), "webm can't hold cover art");
+        let mp3 = option_args(&request(true, "mp3", o)).unwrap();
+        assert!(mp3.contains(&"--embed-thumbnail".to_string()));
+        assert!(!mp3.contains(&"--write-subs".to_string()), "no subtitles for audio");
+
+        let bad = DownloadOptions { custom_args_enabled: true, custom_args: "--x \"unclosed".into(), ..DownloadOptions::default() };
+        assert!(option_args(&request(false, "mp4", bad)).is_err());
+        let junk = DownloadOptions { rate_limit_value: "fast".into(), cookies_browser: "notabrowser".into(), ..DownloadOptions::default() };
+        let args = option_args(&request(false, "mp4", junk)).unwrap();
+        assert!(!args.contains(&"-r".to_string()) && !args.contains(&"--cookies-from-browser".to_string()));
     }
 
     #[test]

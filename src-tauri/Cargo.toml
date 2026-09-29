@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["process", "io-util", "sync", "fs", "macros
 futures-util = "0.3"
 reqwest = { version = "0.13.5", features = ["stream"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+shell-words = "1.1.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

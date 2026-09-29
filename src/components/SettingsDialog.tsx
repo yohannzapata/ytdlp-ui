@@ -23,6 +23,7 @@ import {
   DarkThemeRegular,
   DismissRegular,
   FolderRegular,
+  PlayRegular,
 } from "@fluentui/react-icons";
 import { getVersion } from "@tauri-apps/api/app";
 import { api, chooseFolder, type Theme } from "../api";
@@ -161,6 +162,14 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
                   </Option>
                 ))}
               </Dropdown>
+            </Row>
+
+            <Row
+              icon={<PlayRegular />}
+              title="Start downloads automatically"
+              description="Otherwise links wait in the list until you press Start"
+            >
+              <Switch checked={settings.autoStart} onChange={(_, data) => updateSettings({ autoStart: data.checked })} />
             </Row>
 
             <Row icon={<DarkThemeRegular />} title="App theme">

@@ -1,4 +1,5 @@
 // Small helpers for turning numbers and yt-dlp messages into friendly text.
+import type { Quality } from "./api";
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !isFinite(bytes)) return "";
@@ -40,10 +41,42 @@ export function qualityLabel(height: number): string {
   return `${height}p`;
 }
 
-/** What the queue shows for a download's choices, e.g. "1080p · MP4" or "Audio · MP3". */
-export function describeChoice(audioOnly: boolean, maxHeight: number | null, format: string): string {
-  const quality = audioOnly ? "Audio" : maxHeight ? `${maxHeight}p` : "Best quality";
-  return `${quality} · ${format.toUpperCase()}`;
+export interface QualityChoice {
+  /** "best", a height such as "1080", or "audio". */
+  value: string;
+  label: string;
+  height?: number;
+  size?: number | null;
+}
+
+/** What a row's quality menu offers: the resolutions the video really has, or common ones when that is unknown. */
+export function qualityChoices(qualities: Quality[] | null, audioSize: number | null): QualityChoice[] {
+  if (!qualities) {
+    return [
+      { value: "best", label: "Best available" },
+      ...STANDARD_HEIGHTS.map((h) => ({ value: String(h), label: `Up to ${qualityLabel(h)}`, height: h })),
+      { value: "audio", label: "Audio only" },
+    ];
+  }
+  const [best, ...rest] = qualities;
+  return [
+    {
+      value: "best",
+      label: best ? `Best (${qualityLabel(best.height)})` : "Best available",
+      height: best?.height,
+      size: best?.size,
+    },
+    ...rest.map((q) => ({ value: String(q.height), label: qualityLabel(q.height), height: q.height, size: q.size })),
+    { value: "audio", label: "Audio only", size: audioSize },
+  ];
+}
+
+/** Starts from the last choice, stepping down to the nearest resolution this video has. */
+export function startingQuality(saved: string, choices: QualityChoice[]): string {
+  if (choices.some((c) => c.value === saved)) return saved;
+  const wanted = Number(saved);
+  const fit = wanted ? choices.find((c) => c.height && c.height <= wanted) : undefined;
+  return fit ? fit.value : "best";
 }
 
 const STAGES: Record<string, string> = {

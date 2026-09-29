@@ -5,7 +5,7 @@
 # ytdlp-ui
 
 **A simple, modern desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp).**<br>
-Paste a link, pick a quality, download. YouTube videos, playlists and music, plus 1000+ other sites.
+Paste links, pick a quality for each, press Start. YouTube videos, playlists and music, plus 1000+ other sites.
 
 [![Latest release](https://img.shields.io/github/v/release/yohannzapata/ytdlp-ui?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/yohannzapata/ytdlp-ui/total?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases)
@@ -13,15 +13,18 @@ Paste a link, pick a quality, download. YouTube videos, playlists and music, plu
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0f6cbd?style=flat-square)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-0f6cbd?style=flat-square)
 
-<img src="docs/screenshots/queue.png" alt="ytdlp-ui download queue with live progress" width="820">
+<img src="docs/screenshots/queue.png" alt="ytdlp-ui: download queue with per-video quality and format, live progress, and the options panel" width="860">
 
 </div>
 
 ## Why ytdlp-ui?
 
 yt-dlp is the best video downloader there is, but it lives in a terminal. ytdlp-ui puts a clean, Windows-11-style
-interface on top of it, without giving up any of its power or its constant updates.
+interface on top of it: a queue you can fill with links, an options panel for everything you would otherwise type
+as command-line flags, and none of yt-dlp's power taken away.
 
+- **Simple by default, complete when you need it.** Paste, choose, Start. Speed limit, subtitles, chapters,
+  SponsorBlock, browser cookies and custom arguments are one glance away in the options panel.
 - **Tiny.** The Windows installer is under 3 MB. No bundled browser, no background services.
 - **Nothing to set up.** On first launch it downloads yt-dlp, FFmpeg and Deno for you.
 - **Always working.** Websites change constantly. ytdlp-ui keeps yt-dlp up to date on its own, so downloads don't
@@ -30,25 +33,37 @@ interface on top of it, without giving up any of its power or its constant updat
 
 ## Features
 
-- **Video and playlist downloads** from YouTube and every site yt-dlp supports
-- **Quality picker** that only offers resolutions the video really has, with size estimates
-- **Video formats:** MP4 (H.264, plays everywhere), MKV, WebM
-- **Audio extraction:** MP3, M4A or Opus, with cover art and title/artist tags
+**Queue**
+- Paste one link or many, on one line each. **Ctrl+V** anywhere in the window adds what you copied.
+- Every row has its own **quality** (only the resolutions that video really has, with size estimates) and **format**
+  (MP4, MKV, WebM, or MP3, M4A, Opus)
+- Live progress, speed and time left. Several downloads at once (you choose how many), cancel, retry and **Start /
+  Stop** for the whole queue
+- The queue is remembered when you close the app
 - **Playlists:** tick the videos you want; they're saved into a folder named after the playlist
-- **Download queue** with live progress, speed and time left. Run several downloads at once, cancel or retry any
-  of them.
-- **Safe file handling:** never overwrites an existing file (`Title (1).mp4`), and canceling leaves no partial
-  files behind
-- **Plain-English errors** instead of raw command-line output
-- **Automatic yt-dlp updates** (or update with one click)
-- **Light and dark mode**
+- Open a finished file or show it in its folder in one click
+
+**Options** (the panel under the queue)
+- Download folder and **speed limit**
+- **Subtitles:** embed them in the video or save an `.srt` next to it, in the languages you choose
+- **Chapters:** embed, split into separate files (with optional forced keyframes), or ignore
+- Embed thumbnail (cover art) and title/artist info; skip sponsor segments (SponsorBlock)
+- **Sign in with your browser's cookies** for age-restricted or members-only videos
+- **Custom arguments** for anything else yt-dlp can do
+- An **Output** tab showing exactly what yt-dlp printed for each download
+
+**Safe and tidy**
+- Never overwrites an existing file (`Title (1).mp4`); a video and its subtitle file always get the same number
+- Canceling leaves no partial files behind
+- Plain-English errors instead of raw command-line output
+- Automatic yt-dlp updates (or update with one click), and light and dark mode
 
 <div align="center">
-<img src="docs/screenshots/download-dialog.png" alt="Choosing quality and format" width="49%">
 <img src="docs/screenshots/queue-dark.png" alt="Dark mode" width="49%">
+<img src="docs/screenshots/settings.png" alt="Settings" width="49%">
 </div>
 
-<sub>Screenshots show "Big Buck Bunny", (c) Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).</sub>
+<sub>Screenshots show "Big Buck Bunny" and "Caminandes 3: Llamigos", (c) Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).</sub>
 
 ## Download
 
@@ -58,7 +73,7 @@ Get the installer for your system from the **[latest release](https://github.com
 | --- | --- |
 | Windows 10 / 11 | `ytdlp-ui_x.y.z_x64-setup.exe` (or the `.msi`) |
 | macOS (Apple Silicon and Intel) | `ytdlp-ui_x.y.z_aarch64.dmg` / `ytdlp-ui_x.y.z_x64.dmg` |
-| Linux | `.AppImage` or `.deb` |
+| Linux | `.AppImage`, `.deb` or `.rpm` |
 
 Windows is the most thoroughly tested platform. The macOS and Linux builds are produced automatically for every
 release and get less testing. If something doesn't work there, please [open an issue](https://github.com/yohannzapata/ytdlp-ui/issues).
@@ -77,9 +92,11 @@ The source is right here and every release is built by GitHub Actions from this 
 
 ## How to use
 
-1. Paste a video or playlist link and press **Download**.
-2. Choose the quality and format. Playlists let you tick the videos you want.
-3. Watch it in the queue. Open the file or its folder when it's done.
+1. Paste a video or playlist link (or press **Ctrl+V** anywhere). It appears in the list with its title and thumbnail.
+2. Pick the **quality** and **format** for each row. Adjust the options below if you like.
+3. Press **Start**. Open the file or its folder when it's done.
+
+Prefer no extra click? Turn on **Start downloads automatically** in Settings.
 
 ## FAQ
 
@@ -93,9 +110,12 @@ YouTube, Vimeo, Twitter/X, Instagram, TikTok, SoundCloud, Twitch and over a thou
 folder. If you already have FFmpeg or Deno installed, those are used instead.
 
 **A download stopped working. What now?** Open **Settings** and press **Check for updates**. yt-dlp releases fixes
-quickly whenever a site changes.
+quickly whenever a site changes. A one-off "download was blocked" error often goes away with **Try again**.
 
-**Where are my files?** In the folder you choose in the download dialog or in Settings. Your Downloads folder by
+**How do I download an age-restricted or members-only video?** In the options panel, choose the browser you're
+signed in to under **Sign in with browser cookies**. If Chrome or Edge don't work for you, Firefox usually does.
+
+**Where are my files?** In the folder shown under **Save to** in the options panel. Your Downloads folder by
 default.
 
 **Does it collect any data?** No. There is no telemetry and no account. The app only talks to the sites you
@@ -104,9 +124,9 @@ download from, and to GitHub to fetch yt-dlp, FFmpeg and Deno (on macOS, FFmpeg 
 
 ## Known limitations
 
-- The download list is cleared when you close the app
-- No support yet for logging in (age-restricted or members-only videos), subtitles or cookies
 - The app isn't code-signed yet (see above)
+- The queue is remembered, but the **Output** log of past downloads is not
+- macOS and Linux get less testing than Windows
 
 ## Build from source
 
@@ -127,15 +147,16 @@ Run the Rust tests with `cargo test` inside `src-tauri`.
 
 ytdlp-ui never imports yt-dlp. It runs the standalone yt-dlp program and reads its output (`--progress-template`
 prints one line of JSON per progress update). That way yt-dlp can update itself when websites change, without a
-new release of this app, and canceling a download is just stopping a process.
+new release of this app, and canceling a download is just stopping a process. Each download works in its own hidden
+folder and is moved into place when it finishes, which is what makes canceling clean and overwriting impossible.
 
 | Part | Where |
 | --- | --- |
 | Downloading and updating yt-dlp, FFmpeg and Deno | [`src-tauri/src/tools.rs`](src-tauri/src/tools.rs) |
-| Running yt-dlp: info, downloads, progress, cancel | [`src-tauri/src/ytdlp.rs`](src-tauri/src/ytdlp.rs) |
-| Settings file | [`src-tauri/src/settings.rs`](src-tauri/src/settings.rs) |
+| Running yt-dlp: info, options to arguments, downloads, progress, cancel | [`src-tauri/src/ytdlp.rs`](src-tauri/src/ytdlp.rs) |
+| Settings and download options | [`src-tauri/src/settings.rs`](src-tauri/src/settings.rs) |
 | Typed calls from the UI to Rust | [`src/api.ts`](src/api.ts) |
-| Download queue and state | [`src/store.ts`](src/store.ts) |
+| Queue and app state | [`src/store.ts`](src/store.ts) |
 | Screens | [`src/components/`](src/components) |
 
 **Stack:** [Tauri 2](https://tauri.app) (Rust) · React 19 · TypeScript · [Fluent UI](https://react.fluentui.dev) · Vite.

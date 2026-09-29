@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "ytdlp-ui",
-        "width": 960,
-        "height": 700,
-        "minWidth": 640,
-        "minHeight": 520,
+        "width": 1120,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
         "center": true
       }
     ],

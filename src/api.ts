@@ -5,15 +5,35 @@ import { open } from "@tauri-apps/plugin-dialog";
 
 export type Theme = "system" | "light" | "dark";
 
+export interface DownloadOptions {
+  rateLimitValue: string;
+  rateLimitUnit: "K" | "M";
+  setFileTimeNow: boolean;
+  subtitles: "off" | "embed" | "file";
+  subtitleLangs: string;
+  chapters: "embed" | "split" | "ignore";
+  forceKeyframes: boolean;
+  embedThumbnail: boolean;
+  embedMetadata: boolean;
+  sponsorblock: boolean;
+  cookiesBrowser: string;
+  customArgsEnabled: boolean;
+  customArgs: string;
+}
+
 export interface Settings {
   downloadDir: string;
   maxConcurrent: number;
   theme: Theme;
   autoUpdate: boolean;
   lastUpdateCheck: number;
+  autoStart: boolean;
   quality: string;
   videoFormat: string;
   audioFormat: string;
+  panelOpen: boolean;
+  panelTab: "options" | "output";
+  options: DownloadOptions;
 }
 
 export type Tool = "ytdlp" | "ffmpeg" | "deno";
@@ -74,6 +94,7 @@ export interface DownloadRequest {
   format: string;
   folder: string;
   subfolder: string | null;
+  options: DownloadOptions;
 }
 
 export type DownloadEvent =
@@ -98,7 +119,7 @@ export const api = {
   toolsStatus: () => invoke<ToolStatus[]>("tools_status"),
   toolsInstall: () => invoke<void>("tools_install"),
   updateYtdlp: () => invoke<string>("ytdlp_update"),
-  fetchInfo: (url: string) => invoke<MediaInfo>("fetch_info", { url }),
+  fetchInfo: (url: string, cookiesBrowser: string) => invoke<MediaInfo>("fetch_info", { url, cookiesBrowser }),
   startDownload: (req: DownloadRequest) => invoke<void>("start_download", { req }),
   cancelDownload: (id: string) => invoke<void>("cancel_download", { id }),
   openFile: (path: string) => invoke<void>("open_file", { path }),

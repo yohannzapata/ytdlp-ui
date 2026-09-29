@@ -45,6 +45,8 @@ const useStyles = makeStyles({
     flex: 1,
     minHeight: 0,
     overflow: "auto",
+    display: "flex",
+    flexDirection: "column",
     backgroundColor: tokens.colorNeutralBackground1,
     borderRadius: tokens.borderRadiusLarge,
     ...shorthands.border("1px", "solid", tokens.colorNeutralStroke2),
@@ -54,6 +56,7 @@ const useStyles = makeStyles({
     position: "sticky",
     top: 0,
     zIndex: 1,
+    flexShrink: 0,
     display: "grid",
     gridTemplateColumns: COLUMNS,
     columnGap: "12px",
@@ -71,6 +74,7 @@ const useStyles = makeStyles({
     gridTemplateColumns: COLUMNS,
     columnGap: "12px",
     alignItems: "center",
+    flexShrink: 0,
     padding: "8px 12px",
     minHeight: "56px",
     boxSizing: "border-box",
@@ -103,8 +107,8 @@ const useStyles = makeStyles({
   bad: { color: tokens.colorPaletteRedForeground1, flexShrink: 0 },
   actions: { display: "flex", justifyContent: "flex-end", gap: "0" },
   empty: {
-    height: "calc(100% - 36px)",
-    minHeight: "220px",
+    flex: 1,
+    minHeight: "160px",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -332,11 +336,8 @@ export function QueueTable() {
           <div className={styles.emptyIcon}>
             <ArrowDownload24Regular />
           </div>
-          <Subtitle2>Nothing here yet</Subtitle2>
-          <Body1 className={styles.emptyText}>
-            Paste a video or playlist link above, or press <b>Ctrl+V</b> anywhere in the window. Then choose the quality
-            for each one and press <b>Start</b>.
-          </Body1>
+          <Subtitle2>No downloads yet</Subtitle2>
+          <Body1 className={styles.emptyText}>Paste a link above, or press Ctrl+V.</Body1>
         </div>
       ) : (
         downloads.map((d) => <Row key={d.id} d={d} selected={d.id === selectedId} />)

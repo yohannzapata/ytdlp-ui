@@ -19,7 +19,6 @@
     "video-downloader",
     "tauri",
     "react",
-    "fluent-ui",
     "desktop-app",
     "gui"
   ],

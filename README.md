@@ -19,9 +19,9 @@ Paste links, pick a quality for each, press Start. YouTube videos, playlists and
 
 ## Why ytdlp-ui?
 
-yt-dlp is the best video downloader there is, but it lives in a terminal. ytdlp-ui puts a clean, Windows-11-style
-interface on top of it: a queue you can fill with links, an options panel for everything you would otherwise type
-as command-line flags, and none of yt-dlp's power taken away.
+yt-dlp is the best video downloader there is, but it lives in a terminal. ytdlp-ui puts a simple interface on top of
+it: a queue you can fill with links, an options panel for everything you would otherwise type as command-line
+flags, and none of yt-dlp's power taken away.
 
 - **Simple by default, complete when you need it.** Paste, choose, Start. Speed limit, subtitles, chapters,
   SponsorBlock, browser cookies and custom arguments are one glance away in the options panel.
@@ -29,7 +29,7 @@ as command-line flags, and none of yt-dlp's power taken away.
 - **Nothing to set up.** On first launch it downloads yt-dlp, FFmpeg and Deno for you.
 - **Always working.** Websites change constantly. ytdlp-ui keeps yt-dlp up to date on its own, so downloads don't
   suddenly break.
-- **Looks native.** Built with Microsoft's Fluent UI, with light and dark themes that follow your system.
+- **Clean and simple.** One screen, no clutter, with light and dark themes that follow your system.
 
 ## Features
 
@@ -159,7 +159,7 @@ folder and is moved into place when it finishes, which is what makes canceling c
 | Queue and app state | [`src/store.ts`](src/store.ts) |
 | Screens | [`src/components/`](src/components) |
 
-**Stack:** [Tauri 2](https://tauri.app) (Rust) · React 19 · TypeScript · [Fluent UI](https://react.fluentui.dev) · Vite.
+**Stack:** [Tauri 2](https://tauri.app) (Rust) · React 19 · TypeScript · Vite.
 
 ## Legal
 

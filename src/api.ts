@@ -19,6 +19,7 @@ export interface DownloadOptions {
   cookiesBrowser: string;
   customArgsEnabled: boolean;
   customArgs: string;
+  normalizeAudio: boolean;
 }
 
 export interface Settings {
@@ -86,6 +87,19 @@ export interface PlaylistInfo {
 
 export type MediaInfo = VideoInfo | PlaylistInfo;
 
+/** What was found in a file on this computer. */
+export interface MediaFile {
+  title: string;
+  artist: string | null;
+  duration: number | null;
+  size: number;
+  hasVideo: boolean;
+  /** Shorter side of the video in pixels. */
+  height: number | null;
+  hasAudio: boolean;
+  thumbnail: string | null;
+}
+
 export interface DownloadRequest {
   id: string;
   url: string;
@@ -94,6 +108,16 @@ export interface DownloadRequest {
   format: string;
   folder: string;
   subfolder: string | null;
+  options: DownloadOptions;
+}
+
+export interface ProcessRequest {
+  id: string;
+  path: string;
+  audioOnly: boolean;
+  maxHeight: number | null;
+  format: string;
+  folder: string;
   options: DownloadOptions;
 }
 
@@ -122,6 +146,8 @@ export const api = {
   fetchInfo: (url: string, cookiesBrowser: string) => invoke<MediaInfo>("fetch_info", { url, cookiesBrowser }),
   startDownload: (req: DownloadRequest) => invoke<void>("start_download", { req }),
   cancelDownload: (id: string) => invoke<void>("cancel_download", { id }),
+  probeFile: (path: string) => invoke<MediaFile>("probe_file", { path }),
+  startProcess: (req: ProcessRequest) => invoke<void>("start_process", { req }),
   openFile: (path: string) => invoke<void>("open_file", { path }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
 };
@@ -132,7 +158,24 @@ export async function chooseFolder(current: string): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
-export const onDownloadEvent =(handler: (event: DownloadEvent) => void) =>
+const MEDIA_EXTENSIONS = [
+  "mp4", "mkv", "webm", "mov", "avi", "m4v", "flv", "wmv", "ts", "mpg", "mpeg", "3gp",
+  "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma", "aiff", "aif",
+];
+
+/** Asks for video or audio files; resolves to an empty list if the picker is dismissed. */
+export async function chooseFiles(): Promise<string[]> {
+  const picked = await open({
+    multiple: true,
+    filters: [
+      { name: "Video and audio", extensions: MEDIA_EXTENSIONS },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  return Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+}
+
+export const onDownloadEvent = (handler: (event: DownloadEvent) => void) =>
   listen<DownloadEvent>("download", (e) => handler(e.payload));
 
 export const onInstallProgress = (handler: (event: InstallProgress) => void) =>

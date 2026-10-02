@@ -5,7 +5,8 @@
 # ytdlp-ui
 
 **A simple, modern desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp).**<br>
-Paste links, pick a quality for each, press Start. YouTube videos, playlists and music, plus 1000+ other sites.
+Paste links, pick a quality for each, press Start. YouTube videos, playlists and music, plus 1000+ other sites.<br>
+Have files already? Drop them in to extract the audio, change the format or shrink them.
 
 [![Latest release](https://img.shields.io/github/v/release/yohannzapata/ytdlp-ui?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/yohannzapata/ytdlp-ui/total?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases)
@@ -21,7 +22,8 @@ Paste links, pick a quality for each, press Start. YouTube videos, playlists and
 
 yt-dlp is the best video downloader there is, but it lives in a terminal. ytdlp-ui puts a simple interface on top of
 it: a queue you can fill with links, an options panel for everything you would otherwise type as command-line
-flags, and none of yt-dlp's power taken away.
+flags, and none of yt-dlp's power taken away. Files you already have can go through the same queue, so one app
+covers both getting media and converting it.
 
 - **Simple by default, complete when you need it.** Paste, choose, Start. Speed limit, subtitles, chapters,
   SponsorBlock, browser cookies and custom arguments are one glance away in the options panel.
@@ -42,6 +44,14 @@ flags, and none of yt-dlp's power taken away.
 - The queue is remembered when you close the app
 - **Playlists:** tick the videos you want; they're saved into a folder named after the playlist
 - Open a finished file or show it in its folder in one click
+
+**Your own files** (drop them on the window, or press **Add files**)
+- Use the same two menus as downloads: **Audio only · MP3** extracts the audio, **720p · MP4** shrinks a video,
+  **MKV to MP4** changes the container
+- Nothing is re-encoded when it doesn't need to be, so extracting AAC audio from a video or moving H.264 from MKV to
+  MP4 is instant and loses no quality
+- Songs keep their cover art, title and artist; **Even out volume** brings quiet files to a standard loudness
+- Your original file is never touched; the result is saved next to your downloads
 
 **Options** (the panel under the queue)
 - Download folder and **speed limit**
@@ -93,7 +103,8 @@ The source is right here and every release is built by GitHub Actions from this 
 ## How to use
 
 1. Paste a video or playlist link (or press **Ctrl+V** anywhere). It appears in the list with its title and thumbnail.
-2. Pick the **quality** and **format** for each row. Adjust the options below if you like.
+2. Pick the **quality** and **format** for each row. Adjust the options below if you like. To convert files you
+   already have, drop them on the window or press **Add files**; they use the same menus.
 3. Press **Start**. Open the file or its folder when it's done.
 
 Prefer no extra click? Turn on **Start downloads automatically** in Settings.
@@ -154,6 +165,7 @@ folder and is moved into place when it finishes, which is what makes canceling c
 | --- | --- |
 | Downloading and updating yt-dlp, FFmpeg and Deno | [`src-tauri/src/tools.rs`](src-tauri/src/tools.rs) |
 | Running yt-dlp: info, options to arguments, downloads, progress, cancel | [`src-tauri/src/ytdlp.rs`](src-tauri/src/ytdlp.rs) |
+| Local files: reading them and converting with FFmpeg | [`src-tauri/src/media.rs`](src-tauri/src/media.rs) |
 | Settings and download options | [`src-tauri/src/settings.rs`](src-tauri/src/settings.rs) |
 | Typed calls from the UI to Rust | [`src/api.ts`](src/api.ts) |
 | Queue and app state | [`src/store.ts`](src/store.ts) |

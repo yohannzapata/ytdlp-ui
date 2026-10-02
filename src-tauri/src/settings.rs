@@ -25,6 +25,8 @@ pub struct DownloadOptions {
     pub cookies_browser: String,
     pub custom_args_enabled: bool,
     pub custom_args: String,
+    /// Even out the volume of converted local files.
+    pub normalize_audio: bool,
 }
 
 impl Default for DownloadOptions {
@@ -43,6 +45,7 @@ impl Default for DownloadOptions {
             cookies_browser: String::new(),
             custom_args_enabled: false,
             custom_args: String::new(),
+            normalize_audio: false,
         }
     }
 }

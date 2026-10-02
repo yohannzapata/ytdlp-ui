@@ -31,11 +31,10 @@ import {
   formatDuration,
   formatEta,
   friendlyError,
-  qualityChoices,
   stageLabel,
   VIDEO_FORMATS,
 } from "../format";
-import { isActive, useApp, type Download } from "../store";
+import { choicesFor, isActive, useApp, type Download } from "../store";
 import { Thumbnail } from "./Thumbnail";
 
 const COLUMNS = "minmax(200px, 1fr) 138px 88px 84px 210px 96px";
@@ -207,11 +206,19 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
   const styles = useStyles();
   const { select, setChoice, cancel, retry, remove } = useApp.getState();
   const audio = d.quality === "audio";
-  const choices = qualityChoices(d.qualities, d.audioSize);
+  const choices = choicesFor(d);
   const current = choices.find((c) => c.value === d.quality) ?? choices[0];
   const formats = audio ? AUDIO_FORMATS : VIDEO_FORMATS;
   const editable = d.status === "ready" || d.status === "error" || d.status === "canceled";
-  const subtitle = d.needsInfo && d.status !== "ready" ? d.url : [d.channel, formatDuration(d.duration)].filter(Boolean).join(" · ");
+  const subtitle =
+    d.needsInfo && d.status !== "ready"
+      ? d.url
+      : (d.source === "file"
+          ? ["Local file", d.channel, formatDuration(d.duration), d.fileSize ? formatBytes(d.fileSize) : null]
+          : [d.channel, formatDuration(d.duration)]
+        )
+          .filter(Boolean)
+          .join(" · ");
 
   const openFile = () => d.filepath && api.openFile(d.filepath);
   const onKeyDown = (e: KeyboardEvent) => {
@@ -337,7 +344,7 @@ export function QueueTable() {
             <ArrowDownload24Regular />
           </div>
           <Subtitle2>No downloads yet</Subtitle2>
-          <Body1 className={styles.emptyText}>Paste a link above, or press Ctrl+V.</Body1>
+          <Body1 className={styles.emptyText}>Paste a link above, or drop video and audio files here.</Body1>
         </div>
       ) : (
         downloads.map((d) => <Row key={d.id} d={d} selected={d.id === selectedId} />)

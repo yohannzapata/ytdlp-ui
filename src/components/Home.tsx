@@ -22,6 +22,7 @@ import {
   ChevronDownRegular,
   ChevronUpRegular,
   DeleteRegular,
+  DocumentAddRegular,
   FolderOpenRegular,
   LinkRegular,
   MoreHorizontalRegular,
@@ -29,7 +30,8 @@ import {
   SettingsRegular,
   StopFilled,
 } from "@fluentui/react-icons";
-import { api } from "../api";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { api, chooseFiles } from "../api";
 import { findLinks, isActive, isFinished, useApp } from "../store";
 import { OptionsPanel } from "./OptionsPanel";
 import { OutputPanel } from "./OutputPanel";
@@ -60,6 +62,22 @@ const useStyles = makeStyles({
     overflow: "hidden",
   },
   tabs: { display: "flex", alignItems: "center", padding: "0 4px 0 8px", justifyContent: "space-between" },
+  drop: {
+    position: "fixed",
+    inset: "8px",
+    zIndex: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    borderRadius: tokens.borderRadiusXLarge,
+    backgroundColor: tokens.colorBrandBackground2,
+    color: tokens.colorBrandForeground2,
+    fontSize: tokens.fontSizeBase500,
+    fontWeight: tokens.fontWeightSemibold,
+    ...shorthands.border("2px", "dashed", tokens.colorBrandStroke1),
+    opacity: 0.96,
+  },
   panelBody: { height: PANEL_HEIGHT, boxSizing: "border-box", padding: "4px 16px 14px", overflowY: "auto" },
 });
 
@@ -70,6 +88,26 @@ export function Home() {
   const { addLinks, start, stopAll, retryFailed, clearFinished, clearAll, updateSettings } = useApp.getState();
   const [link, setLink] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+
+  // Files dropped on the window are added to the queue.
+  useEffect(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
+      const payload = event.payload;
+      if (payload.type === "enter" || payload.type === "over") setDragging(true);
+      else if (payload.type === "drop") {
+        setDragging(false);
+        useApp.getState().addFiles(payload.paths);
+      } else setDragging(false);
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, []);
+
+  const addFromPicker = async () => {
+    useApp.getState().addFiles(await chooseFiles());
+  };
 
   // Ctrl+V anywhere in the window adds the copied link(s).
   useEffect(() => {
@@ -90,7 +128,7 @@ export function Home() {
   const waiting = downloads.filter((d) => d.status === "queued").length;
   const finished = downloads.filter(isFinished).length;
   const failed = downloads.filter((d) => d.status === "error" || d.status === "canceled").length;
-  const summary = [running && `${running} downloading`, waiting && `${waiting} waiting`, ready && `${ready} ready`]
+  const summary = [running && `${running} in progress`, waiting && `${waiting} waiting`, ready && `${ready} ready`]
     .filter(Boolean)
     .join(" · ");
 
@@ -120,6 +158,11 @@ export function Home() {
         <Button size="large" icon={<AddRegular />} disabled={!link.trim()} onClick={submit}>
           Add
         </Button>
+        <Tooltip content="Add files from this computer" relationship="label">
+          <Button size="large" icon={<DocumentAddRegular />} onClick={addFromPicker}>
+            Add files
+          </Button>
+        </Tooltip>
         <Tooltip content="Settings" relationship="label">
           <Button appearance="subtle" size="large" icon={<SettingsRegular />} onClick={() => setSettingsOpen(true)} />
         </Tooltip>
@@ -183,6 +226,7 @@ export function Home() {
         )}
       </div>
 
+      {dragging && <div className={styles.drop}>Drop files to add them</div>}
       <PlaylistDialog />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

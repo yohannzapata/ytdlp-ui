@@ -9,14 +9,22 @@ import {
   type ToolStatus,
   type VideoInfo,
 } from "./api";
-import { AUDIO_FORMATS, VIDEO_FORMATS, qualityChoices, startingQuality } from "./format";
+import { AUDIO_FORMATS, STANDARD_HEIGHTS, VIDEO_FORMATS, qualityChoices, startingQuality } from "./format";
 
 export type Status = "fetching" | "ready" | "queued" | "downloading" | "processing" | "done" | "error" | "canceled";
 
 export interface Download {
   id: string;
-  /** The link to download. */
+  /** A "link" row is downloaded; a "file" row is a file on this computer that gets converted. */
+  source: "link" | "file";
+  /** The link to download (for a file: its path). */
   url: string;
+  /** For a file: where it is. */
+  path: string | null;
+  /** For a file: whether it contains video. An audio file can only stay audio. */
+  hasVideo: boolean;
+  /** For a file: its size in bytes. */
+  fileSize: number | null;
   title: string;
   channel: string | null;
   duration: number | null;
@@ -72,6 +80,7 @@ interface AppState {
 
   /** Adds every link found in `text`; returns how many. */
   addLinks(text: string): number;
+  addFiles(paths: string[]): number;
   addPlaylist(id: string, indexes: number[], quality: string, format: string): void;
   dismissPlaylist(id: string): void;
 
@@ -88,7 +97,15 @@ interface AppState {
   handleEvent(event: DownloadEvent): void;
 }
 
+/** The quality choices a row offers. */
+export const choicesFor = (d: Pick<Download, "qualities" | "audioSize" | "source" | "hasVideo">) =>
+  qualityChoices(d.qualities, d.audioSize, d.source === "file" ? { hasVideo: d.hasVideo } : undefined);
+
 const blank = (): Omit<Download, "id" | "url" | "title" | "quality" | "format"> => ({
+  source: "link",
+  path: null,
+  hasVideo: true,
+  fileSize: null,
   channel: null,
   duration: null,
   thumbnail: null,
@@ -133,18 +150,29 @@ export const useApp = create<AppState>((set, get) => {
       active++;
       patch(d.id, { status: "downloading", percent: null, error: null, stage: null, log: [] });
       const audioOnly = d.quality === "audio";
-      api
-        .startDownload({
-          id: d.id,
-          url: d.url,
-          audioOnly,
-          maxHeight: audioOnly || d.quality === "best" ? null : Number(d.quality),
-          format: d.format,
-          folder: settings.downloadDir,
-          subfolder: d.subfolder,
-          options: settings.options,
-        })
-        .catch((err) => {
+      const maxHeight = audioOnly || d.quality === "best" ? null : Number(d.quality);
+      const run =
+        d.source === "file"
+          ? api.startProcess({
+              id: d.id,
+              path: d.path ?? d.url,
+              audioOnly,
+              maxHeight,
+              format: d.format,
+              folder: settings.downloadDir,
+              options: settings.options,
+            })
+          : api.startDownload({
+              id: d.id,
+              url: d.url,
+              audioOnly,
+              maxHeight,
+              format: d.format,
+              folder: settings.downloadDir,
+              subfolder: d.subfolder,
+              options: settings.options,
+            });
+      run.catch((err) => {
           patch(d.id, { status: "error", error: String(err) });
           pump();
         });
@@ -171,7 +199,40 @@ export const useApp = create<AppState>((set, get) => {
     nextLookup();
   };
 
+  /** Reads what is inside a file on this computer. */
+  const lookupFile = async (item: Download) => {
+    const { settings } = get();
+    if (!settings) return;
+    try {
+      const info = await api.probeFile(item.path ?? item.url);
+      if (!get().downloads.some((d) => d.id === item.id)) return; // removed while looking
+      const qualities: Quality[] =
+        info.hasVideo && info.height
+          ? [info.height, ...STANDARD_HEIGHTS.filter((h) => h < info.height!)].map((height) => ({ height, size: null }))
+          : [];
+      const quality = startingQuality(settings.quality, qualityChoices(qualities, null, { hasVideo: info.hasVideo }));
+      patch(item.id, {
+        title: info.title,
+        channel: info.artist,
+        duration: info.duration,
+        thumbnail: info.thumbnail,
+        qualities,
+        audioSize: null,
+        hasVideo: info.hasVideo,
+        fileSize: info.size,
+        quality,
+        format: quality === "audio" ? settings.audioFormat : settings.videoFormat,
+        needsInfo: false,
+        status: settings.autoStart ? "queued" : "ready",
+      });
+      pump();
+    } catch (err) {
+      patch(item.id, { status: "error", error: String(err), needsInfo: true });
+    }
+  };
+
   const lookup = async (item: Download) => {
+    if (item.source === "file") return lookupFile(item);
     const { settings } = get();
     if (!settings) return;
     try {
@@ -250,6 +311,26 @@ export const useApp = create<AppState>((set, get) => {
         id: crypto.randomUUID(),
         url,
         title: url,
+        quality: settings.quality === "audio" ? "audio" : "best",
+        format: settings.quality === "audio" ? settings.audioFormat : settings.videoFormat,
+        needsInfo: true,
+        status: "fetching",
+      }));
+      set((s) => ({ downloads: [...s.downloads, ...added] }));
+      added.forEach((d) => enqueueLookup(d.id));
+      return added.length;
+    },
+
+    addFiles(paths) {
+      const settings = get().settings;
+      if (!settings || !paths.length) return 0;
+      const added: Download[] = paths.map((path) => ({
+        ...blank(),
+        id: crypto.randomUUID(),
+        source: "file",
+        url: path,
+        path,
+        title: path.split(/[\\/]/).pop() ?? path,
         quality: settings.quality === "audio" ? "audio" : "best",
         format: settings.quality === "audio" ? settings.audioFormat : settings.videoFormat,
         needsInfo: true,

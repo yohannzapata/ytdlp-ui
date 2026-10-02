@@ -49,8 +49,16 @@ export interface QualityChoice {
   size?: number | null;
 }
 
-/** What a row's quality menu offers: the resolutions the video really has, or common ones when that is unknown. */
-export function qualityChoices(qualities: Quality[] | null, audioSize: number | null): QualityChoice[] {
+/**
+ * What a row's quality menu offers: the resolutions the video really has, or common ones when that is unknown.
+ * For a file on this computer the top choice is "Original", and an audio file can only stay audio.
+ */
+export function qualityChoices(
+  qualities: Quality[] | null,
+  audioSize: number | null,
+  file?: { hasVideo: boolean },
+): QualityChoice[] {
+  if (file && !file.hasVideo) return [{ value: "audio", label: "Audio only", size: null }];
   if (!qualities) {
     return [
       { value: "best", label: "Best available" },
@@ -59,10 +67,11 @@ export function qualityChoices(qualities: Quality[] | null, audioSize: number | 
     ];
   }
   const [best, ...rest] = qualities;
+  const top = file ? "Original" : "Best";
   return [
     {
       value: "best",
-      label: best ? `Best (${qualityLabel(best.height)})` : "Best available",
+      label: best ? `${top} (${qualityLabel(best.height)})` : `${top} available`,
       height: best?.height,
       size: best?.size,
     },
@@ -76,7 +85,7 @@ export function startingQuality(saved: string, choices: QualityChoice[]): string
   if (choices.some((c) => c.value === saved)) return saved;
   const wanted = Number(saved);
   const fit = wanted ? choices.find((c) => c.height && c.height <= wanted) : undefined;
-  return fit ? fit.value : "best";
+  return fit ? fit.value : choices.some((c) => c.value === "best") ? "best" : choices[0].value;
 }
 
 const STAGES: Record<string, string> = {
@@ -94,6 +103,8 @@ export function stageLabel(name: string | undefined): string {
 }
 
 const ERRORS: [RegExp, string][] = [
+  [/No such file or directory/i, "The file was moved or deleted."],
+  [/This is a folder/i, "That's a folder. Add the files inside it instead."],
   [/not a valid URL|Unsupported URL/i, "This link isn't supported."],
   [/Private video/i, "This video is private."],
   [/confirm your age|age-restricted/i, "This video is age-restricted and can't be downloaded without signing in."],

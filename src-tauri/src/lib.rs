@@ -1,3 +1,4 @@
+mod media;
 mod settings;
 mod tools;
 mod ytdlp;
@@ -27,6 +28,8 @@ pub fn run() {
             ytdlp::fetch_info,
             ytdlp::start_download,
             ytdlp::cancel_download,
+            media::probe_file,
+            media::start_process,
             open_file,
             show_in_folder,
         ])

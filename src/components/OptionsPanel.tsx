@@ -188,6 +188,11 @@ export function OptionsPanel() {
           checked={o.setFileTimeNow}
           onChange={(_, data) => updateOptions({ setFileTimeNow: !!data.checked })}
         />
+        <Checkbox
+          label="Even out volume (local files)"
+          checked={o.normalizeAudio}
+          onChange={(_, data) => updateOptions({ normalizeAudio: !!data.checked })}
+        />
         {o.chapters === "split" && (
           <Checkbox
             label="Force keyframes at cuts"

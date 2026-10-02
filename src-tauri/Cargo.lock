@@ -5476,6 +5476,7 @@ dependencies = [
 name = "ytdlp-ui"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.1",
  "futures-util",
  "reqwest",
  "serde",

@@ -243,7 +243,7 @@ pub struct DownloadRequest {
 
 #[derive(Serialize, Clone)]
 #[serde(tag = "type", rename_all = "camelCase")]
-enum DownloadEvent {
+pub(crate) enum DownloadEvent {
     #[serde(rename_all = "camelCase")]
     Progress {
         id: String,
@@ -271,9 +271,9 @@ enum DownloadEvent {
 
 #[derive(Default)]
 pub struct Jobs {
-    /// Download id -> (yt-dlp process id, staging folder).
-    running: Mutex<HashMap<String, (u32, PathBuf)>>,
-    canceled: Mutex<HashSet<String>>,
+    /// Job id -> (process id, staging folder). Shared with `media.rs`, which runs FFmpeg jobs.
+    pub(crate) running: Mutex<HashMap<String, (u32, PathBuf)>>,
+    pub(crate) canceled: Mutex<HashSet<String>>,
 }
 
 fn format_args(req: &DownloadRequest) -> Vec<String> {
@@ -416,7 +416,7 @@ fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Resu
 
 const STAGING: &str = ".ytdlp-ui";
 
-fn staging_dir(folder: &Path, id: &str) -> Result<PathBuf, String> {
+pub(crate) fn staging_dir(folder: &Path, id: &str) -> Result<PathBuf, String> {
     let root = folder.join(STAGING);
     let short_id: String = id.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
     let dir = root.join(short_id);
@@ -451,7 +451,7 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
 /// Moves everything a download produced (the video, subtitle files, split chapters...) from `staging` into
 /// `dir` and returns the new path of `main`. Taken names get " (1)", " (2)"... like a browser does; a video and
 /// its sidecar files (`Title.mp4`, `Title.en.srt`) always get the same number so they stay paired.
-fn move_results(main: &Path, staging: &Path, dir: &Path) -> std::io::Result<PathBuf> {
+pub(crate) fn move_results(main: &Path, staging: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let main_name = main.file_name().unwrap_or_default().to_string_lossy().into_owned();
     let stem = main.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -498,7 +498,7 @@ fn move_results(main: &Path, staging: &Path, dir: &Path) -> std::io::Result<Path
 }
 
 /// Removes a job's staging folder. Windows can hold files open briefly after a process is killed.
-fn remove_staging(dir: &Path) {
+pub(crate) fn remove_staging(dir: &Path) {
     for _ in 0..20 {
         if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
             break;
@@ -591,7 +591,7 @@ pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, req: Download
     Ok(())
 }
 
-fn forward_lines(stream: Option<impl AsyncRead + Unpin + Send + 'static>, tx: mpsc::UnboundedSender<String>) {
+pub(crate) fn forward_lines(stream: Option<impl AsyncRead + Unpin + Send + 'static>, tx: mpsc::UnboundedSender<String>) {
     let Some(stream) = stream else { return };
     tauri::async_runtime::spawn(async move {
         let mut reader = BufReader::new(stream);

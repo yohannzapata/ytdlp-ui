@@ -85,6 +85,8 @@ Get the installer for your system from the **[latest release](https://github.com
 | macOS (Apple Silicon and Intel) | `ytdlp-ui_x.y.z_aarch64.dmg` / `ytdlp-ui_x.y.z_x64.dmg` |
 | Linux | `.AppImage`, `.deb` or `.rpm` |
 
+See the [changelog](CHANGELOG.md) for what changed in each version.
+
 Windows is the most thoroughly tested platform. The macOS and Linux builds are produced automatically for every
 release and get less testing. If something doesn't work there, please [open an issue](https://github.com/yohannzapata/ytdlp-ui/issues).
 

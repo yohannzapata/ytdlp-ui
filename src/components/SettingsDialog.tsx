@@ -19,12 +19,14 @@ import {
 import {
   ArrowDownloadRegular,
   ArrowSyncCheckmarkRegular,
+  ArrowSplitRegular,
   ArrowSyncRegular,
   DarkThemeRegular,
   DismissRegular,
   FolderRegular,
   PlayRegular,
 } from "@fluentui/react-icons";
+import { formatBytes } from "../format";
 import { getVersion } from "@tauri-apps/api/app";
 import { api, chooseFolder, type Theme } from "../api";
 import { useApp } from "../store";
@@ -99,7 +101,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
   const styles = useStyles();
   const settings = useApp((s) => s.settings)!;
   const tools = useApp((s) => s.tools) ?? [];
-  const { updateSettings, refreshTools } = useApp.getState();
+  const stems = useApp((s) => s.stems);
+  const { updateSettings, refreshTools, requestStems, removeStems } = useApp.getState();
+  const [removing, setRemoving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
@@ -162,6 +166,41 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose(): vo
                   </Option>
                 ))}
               </Dropdown>
+            </Row>
+
+            <Row
+              icon={<ArrowSplitRegular />}
+              title="Separate audio"
+              description={
+                stems?.installed
+                  ? `Installed · ${formatBytes(stems.sizeBytes)}${stems.gpu ? " · uses your NVIDIA graphics card" : ""}`
+                  : "Split vocals, drums, bass and more. One-time download of about 0.8 GB."
+              }
+            >
+              {stems?.installed ? (
+                <Button
+                  disabled={removing}
+                  onClick={async () => {
+                    setRemoving(true);
+                    try {
+                      await removeStems();
+                    } finally {
+                      setRemoving(false);
+                    }
+                  }}
+                >
+                  {removing ? "Removing…" : "Remove"}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => {
+                    onClose();
+                    requestStems();
+                  }}
+                >
+                  Install…
+                </Button>
+              )}
             </Row>
 
             <Row

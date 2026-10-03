@@ -38,6 +38,8 @@ import { OutputPanel } from "./OutputPanel";
 import { PlaylistDialog } from "./PlaylistDialog";
 import { QueueTable } from "./QueueTable";
 import { SettingsDialog } from "./SettingsDialog";
+import { StemsDialog } from "./StemsDialog";
+import { StemsPicker } from "./StemsPicker";
 
 const PANEL_HEIGHT = "224px";
 
@@ -228,6 +230,8 @@ export function Home() {
 
       {dragging && <div className={styles.drop}>Drop files to add them</div>}
       <PlaylistDialog />
+      <StemsPicker />
+      <StemsDialog />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );

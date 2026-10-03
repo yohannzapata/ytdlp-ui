@@ -17,6 +17,7 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwiseRegular,
+  ArrowSplitRegular,
   ArrowDownload24Regular,
   CheckmarkCircleFilled,
   DismissRegular,
@@ -26,13 +27,15 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "../api";
 import {
-  AUDIO_FORMATS,
   formatBytes,
   formatDuration,
   formatEta,
+  formatsFor,
   friendlyError,
+  isAudioQuality,
+  isStems,
   stageLabel,
-  VIDEO_FORMATS,
+  stemsLabel,
 } from "../format";
 import { choicesFor, isActive, useApp, type Download } from "../store";
 import { Thumbnail } from "./Thumbnail";
@@ -204,11 +207,13 @@ function IconButton({ label, icon, onClick }: { label: string; icon: ReactElemen
 
 function Row({ d, selected }: { d: Download; selected: boolean }) {
   const styles = useStyles();
-  const { select, setChoice, cancel, retry, remove } = useApp.getState();
-  const audio = d.quality === "audio";
+  const { select, setChoice, chooseStems, cancel, retry, remove } = useApp.getState();
+  const audio = isAudioQuality(d.quality);
   const choices = choicesFor(d);
   const current = choices.find((c) => c.value === d.quality) ?? choices[0];
-  const formats = audio ? AUDIO_FORMATS : VIDEO_FORMATS;
+  // The menu entry is always "Separate audio…"; the row itself says which parts.
+  const currentLabel = d.quality === "stems" ? stemsLabel({ parts: d.stemParts, rest: d.stemRest }) : current.label;
+  const formats = formatsFor(d.quality);
   const editable = d.status === "ready" || d.status === "error" || d.status === "canceled";
   const subtitle =
     d.needsInfo && d.status !== "ready"
@@ -236,9 +241,15 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
         key="q"
         size="small"
         className={styles.choice}
-        value={current.label}
+        value={currentLabel}
+        listbox={{ style: { minWidth: "200px" } }}
         selectedOptions={[current.value]}
-        onOptionSelect={(_, data) => data.optionValue && setChoice(d.id, { quality: data.optionValue })}
+        onOptionSelect={(_, data) => {
+          if (!data.optionValue) return;
+          // Which parts to separate is asked in a dialog of its own, also when changing an earlier choice.
+          if (data.optionValue === "stems") chooseStems({ id: d.id });
+          else setChoice(d.id, { quality: data.optionValue });
+        }}
       >
         {choices.map((c) => (
           <Option key={c.value} value={c.value} text={c.label}>
@@ -267,7 +278,7 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
   } else {
     choiceCell = [
       <Caption1 key="q" className={styles.choiceText}>
-        {current.label.replace(/^Best \((.*)\)$/, "$1")}
+        {currentLabel.replace(/^Best \((.*)\)$/, "$1")}
       </Caption1>,
       <Caption1 key="f" className={styles.choiceText}>
         {d.format.toUpperCase()}
@@ -309,6 +320,9 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
             <IconButton label="Open" icon={<OpenRegular />} onClick={openFile} />
             <IconButton label="Show in folder" icon={<FolderOpenRegular />} onClick={() => api.showInFolder(d.filepath!)} />
           </>
+        )}
+        {d.status === "done" && d.filepath && !isStems(d.quality) && (d.source === "link" || d.hasAudio) && (
+          <IconButton label="Separate audio" icon={<ArrowSplitRegular />} onClick={() => chooseStems({ path: d.filepath! })} />
         )}
         {(d.status === "error" || d.status === "canceled") && (
           <IconButton label="Try again" icon={<ArrowClockwiseRegular />} onClick={() => retry(d.id)} />

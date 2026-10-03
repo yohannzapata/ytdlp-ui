@@ -32,6 +32,59 @@ export function formatEta(seconds: number | null | undefined): string {
 
 export const VIDEO_FORMATS = ["mp4", "mkv", "webm"];
 export const AUDIO_FORMATS = ["mp3", "m4a", "opus"];
+/** Formats for the separated parts. */
+export const STEM_FORMATS = ["mp3", "flac", "wav"];
+
+/** The parts a file's sound can be separated into, in the order they are listed. */
+export const STEM_PARTS = [
+  { value: "vocals", label: "Vocals", hint: "Singing and speech" },
+  { value: "drums", label: "Drums", hint: "" },
+  { value: "bass", label: "Bass", hint: "" },
+  { value: "guitar", label: "Guitar", hint: "Less exact than the first three" },
+  { value: "piano", label: "Piano", hint: "The least exact part" },
+  { value: "other", label: "Other", hint: "Synths, strings and everything else" },
+];
+
+/** Which parts to save, and whether to also save everything that wasn't chosen as one more file. */
+export interface StemsChoice {
+  parts: string[];
+  rest: boolean;
+}
+
+export const DEFAULT_STEMS: StemsChoice = { parts: ["vocals"], rest: true };
+
+/** Without guitar or piano the standard model runs, and its "other" still holds both. */
+const FOUR_PARTS = ["vocals", "drums", "bass", "other"];
+
+/** The parts that end up in the extra file: everything that wasn't chosen. Empty when nothing is left. */
+export function leftoverParts(parts: string[]): string[] {
+  const six = parts.includes("guitar") || parts.includes("piano");
+  return (six ? STEM_PARTS.map((p) => p.value) : FOUR_PARTS).filter((p) => !parts.includes(p));
+}
+
+/** What the extra file is called, the same way the app names it. */
+export function restName(parts: string[]): string {
+  if (parts.length === 1 && parts[0] === "vocals") return "instrumental";
+  if (parts.length === 1 && parts[0] !== "other") return `no ${parts[0]}`;
+  return "everything else";
+}
+
+/** A short description of a choice for the quality menu: "Vocals + instrumental", "Drums + Bass + rest", "3 parts". */
+export function stemsLabel({ parts, rest }: StemsChoice): string {
+  const names = STEM_PARTS.filter((p) => parts.includes(p.value)).map((p) => p.label);
+  const withRest = rest && leftoverParts(parts).length > 0;
+  if (names.length === 1 && parts[0] === "vocals") return withRest ? "Vocals + instrumental" : "Vocals only";
+  const base = names.length <= 2 ? names.join(" + ") : `${names.length} parts`;
+  if (withRest) return `${base} + rest`;
+  return names.length === 1 ? `${base} only` : base;
+}
+
+/** "stems" is the quality choice that separates a file's sound; which parts is stored beside it. */
+export const isStems = (quality: string) => quality === "stems";
+/** Choices that produce audio only: plain audio, or stems. */
+export const isAudioQuality = (quality: string) => quality === "audio" || isStems(quality);
+export const formatsFor = (quality: string) =>
+  isStems(quality) ? STEM_FORMATS : quality === "audio" ? AUDIO_FORMATS : VIDEO_FORMATS;
 
 /** Quality choices shown for playlists, where each video's options aren't known up front. */
 export const STANDARD_HEIGHTS = [2160, 1440, 1080, 720, 480, 360];
@@ -42,7 +95,7 @@ export function qualityLabel(height: number): string {
 }
 
 export interface QualityChoice {
-  /** "best", a height such as "1080", or "audio". */
+  /** "best", a height such as "1080", "audio", or "stems" (separate the sound). */
   value: string;
   label: string;
   height?: number;
@@ -56,9 +109,11 @@ export interface QualityChoice {
 export function qualityChoices(
   qualities: Quality[] | null,
   audioSize: number | null,
-  file?: { hasVideo: boolean },
+  file?: { hasVideo: boolean; hasAudio: boolean },
 ): QualityChoice[] {
-  if (file && !file.hasVideo) return [{ value: "audio", label: "Audio only", size: null }];
+  // Separating the sound only makes sense for a file that has sound.
+  const stems: QualityChoice[] = file?.hasAudio ? [{ value: "stems", label: "Separate audio…" }] : [];
+  if (file && !file.hasVideo) return [{ value: "audio", label: "Audio only", size: null }, ...stems];
   if (!qualities) {
     return [
       { value: "best", label: "Best available" },
@@ -77,6 +132,7 @@ export function qualityChoices(
     },
     ...rest.map((q) => ({ value: String(q.height), label: qualityLabel(q.height), height: q.height, size: q.size })),
     { value: "audio", label: "Audio only", size: audioSize },
+    ...stems,
   ];
 }
 
@@ -93,6 +149,8 @@ const STAGES: Record<string, string> = {
   ExtractAudio: "Converting audio…",
   VideoRemuxer: "Converting video…",
   EmbedThumbnail: "Adding cover art…",
+  ReadFile: "Reading the file…",
+  SaveStems: "Saving the parts…",
   Metadata: "Adding details…",
   FFmpegMetadata: "Adding details…",
   MoveFiles: "Finishing…",

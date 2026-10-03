@@ -10,7 +10,7 @@ import {
   type Theme,
 } from "@fluentui/react-components";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { api, onDownloadEvent } from "./api";
+import { api, onDownloadEvent, onStemsProgress } from "./api";
 import { Home } from "./components/Home";
 import { Setup } from "./components/Setup";
 import { useApp } from "./store";
@@ -53,8 +53,10 @@ export default function App() {
   useEffect(() => {
     useApp.getState().load().catch(console.error);
     const unlisten = onDownloadEvent((event) => useApp.getState().handleEvent(event));
+    const unlistenStems = onStemsProgress((event) => useApp.getState().handleStemsEvent(event));
     return () => {
       unlisten.then((stop) => stop());
+      unlistenStems.then((stop) => stop());
     };
   }, []);
 

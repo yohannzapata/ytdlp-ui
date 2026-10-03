@@ -100,6 +100,34 @@ export interface MediaFile {
   thumbnail: string | null;
 }
 
+export interface StemsStatus {
+  installed: boolean;
+  /** The installed build runs on an NVIDIA graphics card. */
+  gpu: boolean;
+  /** An NVIDIA graphics card is present, so the faster build can be offered. */
+  nvidiaFound: boolean;
+  sizeBytes: number;
+}
+
+export interface StemsProgress {
+  phase: "uv" | "python" | "packages" | "model" | "done" | "error";
+  detail: string;
+  received: number;
+  total: number;
+  error: string | null;
+}
+
+export interface SeparateRequest {
+  id: string;
+  path: string;
+  /** The parts to save as files of their own. */
+  parts: string[];
+  /** Also save everything that wasn't chosen, mixed together, as one more file. */
+  rest: boolean;
+  format: string;
+  folder: string;
+}
+
 export interface DownloadRequest {
   id: string;
   url: string;
@@ -148,6 +176,11 @@ export const api = {
   cancelDownload: (id: string) => invoke<void>("cancel_download", { id }),
   probeFile: (path: string) => invoke<MediaFile>("probe_file", { path }),
   startProcess: (req: ProcessRequest) => invoke<void>("start_process", { req }),
+  startSeparate: (req: SeparateRequest) => invoke<void>("start_separate", { req }),
+  stemsStatus: () => invoke<StemsStatus>("stems_status"),
+  stemsInstall: (gpu: boolean) => invoke<void>("stems_install", { gpu }),
+  stemsCancelInstall: () => invoke<void>("stems_cancel_install"),
+  stemsRemove: () => invoke<void>("stems_remove"),
   openFile: (path: string) => invoke<void>("open_file", { path }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
 };
@@ -180,3 +213,6 @@ export const onDownloadEvent = (handler: (event: DownloadEvent) => void) =>
 
 export const onInstallProgress = (handler: (event: InstallProgress) => void) =>
   listen<InstallProgress>("tools-progress", (e) => handler(e.payload));
+
+export const onStemsProgress = (handler: (event: StemsProgress) => void) =>
+  listen<StemsProgress>("stems-progress", (e) => handler(e.payload));

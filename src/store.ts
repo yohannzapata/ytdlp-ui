@@ -6,10 +6,23 @@ import {
   type PlaylistInfo,
   type Quality,
   type Settings,
+  type StemsProgress,
+  type StemsStatus,
   type ToolStatus,
   type VideoInfo,
 } from "./api";
-import { AUDIO_FORMATS, STANDARD_HEIGHTS, VIDEO_FORMATS, qualityChoices, startingQuality } from "./format";
+import {
+  DEFAULT_STEMS,
+  STANDARD_HEIGHTS,
+  STEM_FORMATS,
+  STEM_PARTS,
+  formatsFor,
+  isAudioQuality,
+  isStems,
+  qualityChoices,
+  startingQuality,
+  type StemsChoice,
+} from "./format";
 
 export type Status = "fetching" | "ready" | "queued" | "downloading" | "processing" | "done" | "error" | "canceled";
 
@@ -23,6 +36,10 @@ export interface Download {
   path: string | null;
   /** For a file: whether it contains video. An audio file can only stay audio. */
   hasVideo: boolean;
+  /** For a file: whether it has sound (only then can it be separated into parts). */
+  hasAudio: boolean;
+  /** Parts to separate it into, chosen before the file has been read. */
+  preset: StemsChoice | null;
   /** For a file: its size in bytes. */
   fileSize: number | null;
   title: string;
@@ -32,8 +49,11 @@ export interface Download {
   /** Resolutions this video really has, or null when unknown (playlist entries). */
   qualities: Quality[] | null;
   audioSize: number | null;
-  /** "best", a height such as "1080", or "audio". */
+  /** "best", a height such as "1080", "audio", or "stems" (separate the sound into the parts below). */
   quality: string;
+  /** With the "stems" quality: the parts to save as their own files, and whether to also save the rest. */
+  stemParts: string[];
+  stemRest: boolean;
   format: string;
   /** Playlist downloads go into a folder named after the playlist. */
   subfolder: string | null;
@@ -65,6 +85,29 @@ const FINISHED: Status[] = ["done", "error", "canceled"];
 const LOG_LINES = 300;
 const MAX_INFO_LOOKUPS = 3;
 const STORAGE_KEY = "ytdlp-ui.queue.v1";
+const STEMS_KEY = "ytdlp-ui.stems.v1";
+
+/** The parts chosen last time, so the next file starts from them. */
+function lastStemsChoice(): StemsChoice {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STEMS_KEY) ?? "null") as StemsChoice | null;
+    const valid = STEM_PARTS.map((p) => p.value);
+    if (saved && Array.isArray(saved.parts) && saved.parts.length && saved.parts.every((p) => valid.includes(p))) {
+      return { parts: saved.parts, rest: !!saved.rest };
+    }
+  } catch {
+    /* nothing remembered */
+  }
+  return DEFAULT_STEMS;
+}
+
+function rememberStemsChoice(choice: StemsChoice) {
+  try {
+    localStorage.setItem(STEMS_KEY, JSON.stringify(choice));
+  } catch {
+    /* the choice just won't be remembered */
+  }
+}
 
 interface AppState {
   settings: Settings | null;
@@ -72,6 +115,14 @@ interface AppState {
   downloads: Download[];
   selectedId: string | null;
   playlists: PendingPlaylist[];
+  /** The stem-separation add-on: installed or not, and how big. */
+  stems: StemsStatus | null;
+  /** How the install is going while it runs (or what went wrong). */
+  stemsInstall: { phase: string; detail: string; received: number; total: number; error: string | null } | null;
+  /** Set while the "install audio separation?" dialog is open; `then` runs once it has been installed. */
+  stemsPrompt: { then: (() => void) | null } | null;
+  /** Set while the "which parts?" dialog is open: for a row of the list (`id`) or a finished file (`path`). */
+  stemsPicker: { id: string | null; path: string | null; initial: StemsChoice } | null;
 
   load(): Promise<void>;
   refreshTools(): Promise<void>;
@@ -80,12 +131,23 @@ interface AppState {
 
   /** Adds every link found in `text`; returns how many. */
   addLinks(text: string): number;
-  addFiles(paths: string[]): number;
+  addFiles(paths: string[], preset?: StemsChoice): number;
+  /** Opens the "which parts?" dialog for a row of the list, or for a finished file (which is then added as a row). */
+  chooseStems(target: { id: string } | { path: string }): void;
+  confirmStems(choice: StemsChoice): void;
+  dismissStemsPicker(): void;
+  refreshStems(): Promise<void>;
+  requestStems(then?: () => void): void;
+  dismissStemsPrompt(): void;
+  installStems(gpu: boolean): Promise<void>;
+  cancelStemsInstall(): void;
+  removeStems(): Promise<void>;
+  handleStemsEvent(event: StemsProgress): void;
   addPlaylist(id: string, indexes: number[], quality: string, format: string): void;
   dismissPlaylist(id: string): void;
 
   select(id: string | null): void;
-  setChoice(id: string, choice: { quality?: string; format?: string }): void;
+  setChoice(id: string, choice: { quality?: string; format?: string; stems?: StemsChoice }): void;
   start(): void;
   stopAll(): void;
   cancel(id: string): void;
@@ -98,13 +160,17 @@ interface AppState {
 }
 
 /** The quality choices a row offers. */
-export const choicesFor = (d: Pick<Download, "qualities" | "audioSize" | "source" | "hasVideo">) =>
-  qualityChoices(d.qualities, d.audioSize, d.source === "file" ? { hasVideo: d.hasVideo } : undefined);
+export const choicesFor = (d: Pick<Download, "qualities" | "audioSize" | "source" | "hasVideo" | "hasAudio">) =>
+  qualityChoices(d.qualities, d.audioSize, d.source === "file" ? { hasVideo: d.hasVideo, hasAudio: d.hasAudio } : undefined);
 
 const blank = (): Omit<Download, "id" | "url" | "title" | "quality" | "format"> => ({
   source: "link",
   path: null,
   hasVideo: true,
+  hasAudio: true,
+  preset: null,
+  stemParts: DEFAULT_STEMS.parts,
+  stemRest: DEFAULT_STEMS.rest,
   fileSize: null,
   channel: null,
   duration: null,
@@ -147,12 +213,22 @@ export const useApp = create<AppState>((set, get) => {
     for (const d of downloads) {
       if (active >= settings.maxConcurrent) break;
       if (d.status !== "queued") continue;
+      // A separation uses every processor core, so only one runs at a time; the others wait their turn.
+      if (isStems(d.quality) && get().downloads.some((x) => ACTIVE.includes(x.status) && isStems(x.quality))) continue;
       active++;
       patch(d.id, { status: "downloading", percent: null, error: null, stage: null, log: [] });
       const audioOnly = d.quality === "audio";
       const maxHeight = audioOnly || d.quality === "best" ? null : Number(d.quality);
-      const run =
-        d.source === "file"
+      const run = isStems(d.quality)
+        ? api.startSeparate({
+            id: d.id,
+            path: d.path ?? d.url,
+            parts: d.stemParts,
+            rest: d.stemRest,
+            format: d.format,
+            folder: settings.downloadDir,
+          })
+        : d.source === "file"
           ? api.startProcess({
               id: d.id,
               path: d.path ?? d.url,
@@ -210,8 +286,12 @@ export const useApp = create<AppState>((set, get) => {
         info.hasVideo && info.height
           ? [info.height, ...STANDARD_HEIGHTS.filter((h) => h < info.height!)].map((height) => ({ height, size: null }))
           : [];
-      const quality = startingQuality(settings.quality, qualityChoices(qualities, null, { hasVideo: info.hasVideo }));
+      const choices = qualityChoices(qualities, null, { hasVideo: info.hasVideo, hasAudio: info.hasAudio });
+      const separate = item.preset !== null && choices.some((c) => c.value === "stems");
+      const quality = separate ? "stems" : startingQuality(settings.quality, choices);
+      const stemFormat = STEM_FORMATS.includes(settings.audioFormat) ? settings.audioFormat : STEM_FORMATS[0];
       patch(item.id, {
+        hasAudio: info.hasAudio,
         title: info.title,
         channel: info.artist,
         duration: info.duration,
@@ -221,7 +301,8 @@ export const useApp = create<AppState>((set, get) => {
         hasVideo: info.hasVideo,
         fileSize: info.size,
         quality,
-        format: quality === "audio" ? settings.audioFormat : settings.videoFormat,
+        ...(separate ? { stemParts: item.preset!.parts, stemRest: item.preset!.rest } : {}),
+        format: isStems(quality) ? stemFormat : quality === "audio" ? settings.audioFormat : settings.videoFormat,
         needsInfo: false,
         status: settings.autoStart ? "queued" : "ready",
       });
@@ -278,9 +359,13 @@ export const useApp = create<AppState>((set, get) => {
     downloads: [],
     selectedId: null,
     playlists: [],
+    stems: null,
+    stemsInstall: null,
+    stemsPrompt: null,
+    stemsPicker: null,
 
     async load() {
-      const [settings] = await Promise.all([api.getSettings(), get().refreshTools()]);
+      const [settings] = await Promise.all([api.getSettings(), get().refreshTools(), get().refreshStems()]);
       set({ settings, downloads: restoreQueue() });
     },
 
@@ -321,9 +406,10 @@ export const useApp = create<AppState>((set, get) => {
       return added.length;
     },
 
-    addFiles(paths) {
+    addFiles(paths, preset) {
       const settings = get().settings;
       if (!settings || !paths.length) return 0;
+      const last = lastStemsChoice();
       const added: Download[] = paths.map((path) => ({
         ...blank(),
         id: crypto.randomUUID(),
@@ -331,6 +417,9 @@ export const useApp = create<AppState>((set, get) => {
         url: path,
         path,
         title: path.split(/[\\/]/).pop() ?? path,
+        preset: preset ?? null,
+        stemParts: last.parts,
+        stemRest: last.rest,
         quality: settings.quality === "audio" ? "audio" : "best",
         format: settings.quality === "audio" ? settings.audioFormat : settings.videoFormat,
         needsInfo: true,
@@ -369,6 +458,78 @@ export const useApp = create<AppState>((set, get) => {
       pump();
     },
 
+    chooseStems(target) {
+      const row = "id" in target ? get().downloads.find((d) => d.id === target.id) : undefined;
+      const initial = row?.quality === "stems" ? { parts: row.stemParts, rest: row.stemRest } : lastStemsChoice();
+      set({ stemsPicker: { id: "id" in target ? target.id : null, path: "path" in target ? target.path : null, initial } });
+    },
+
+    confirmStems(choice) {
+      const picker = get().stemsPicker;
+      if (!picker) return;
+      set({ stemsPicker: null });
+      rememberStemsChoice(choice);
+      if (picker.id) {
+        get().setChoice(picker.id, { quality: "stems", stems: choice });
+      } else if (picker.path) {
+        const path = picker.path;
+        const go = () => get().addFiles([path], choice);
+        if (get().stems?.installed) go();
+        else get().requestStems(go);
+      }
+    },
+
+    dismissStemsPicker() {
+      set({ stemsPicker: null });
+    },
+
+    async refreshStems() {
+      set({ stems: await api.stemsStatus() });
+    },
+
+    requestStems(then) {
+      set({ stemsPrompt: { then: then ?? null } });
+    },
+
+    dismissStemsPrompt() {
+      // While an install is running the only way out is Cancel, so it can't be left running unseen.
+      const install = get().stemsInstall;
+      if (!install || install.error) set({ stemsPrompt: null, stemsInstall: null });
+    },
+
+    async installStems(gpu) {
+      set({ stemsInstall: { phase: "uv", detail: "Starting…", received: 0, total: 0, error: null } });
+      try {
+        await api.stemsInstall(gpu);
+        await get().refreshStems();
+        const then = get().stemsPrompt?.then;
+        set({ stemsInstall: null, stemsPrompt: null });
+        then?.();
+      } catch (err) {
+        await get().refreshStems().catch(() => {});
+        if (String(err) === "Canceled") set({ stemsInstall: null });
+        else set((s) => ({ stemsInstall: { ...(s.stemsInstall ?? { phase: "error", detail: "", received: 0, total: 0 }), error: String(err) } }));
+      }
+    },
+
+    cancelStemsInstall() {
+      api.stemsCancelInstall().catch(console.error);
+    },
+
+    async removeStems() {
+      await api.stemsRemove();
+      await get().refreshStems();
+    },
+
+    handleStemsEvent(event) {
+      if (event.phase === "done" || event.phase === "error") return;
+      set((s) =>
+        s.stemsInstall
+          ? { stemsInstall: { ...s.stemsInstall, phase: event.phase, detail: event.detail, received: event.received, total: event.total } }
+          : {},
+      );
+    },
+
     dismissPlaylist(id) {
       set((s) => ({ playlists: s.playlists.filter((p) => p.id !== id) }));
     },
@@ -382,15 +543,24 @@ export const useApp = create<AppState>((set, get) => {
       const settings = get().settings;
       if (!d || !settings) return;
       const quality = choice.quality ?? d.quality;
-      const audio = quality === "audio";
-      let format = choice.format ?? d.format;
-      // Switching between video and audio swaps in the matching kind of format.
-      if (choice.quality && (quality === "audio") !== (d.quality === "audio")) {
-        format = audio ? settings.audioFormat : settings.videoFormat;
+      // Splitting a song needs the add-on; offer to install it first and apply the choice afterwards.
+      if (isStems(quality) && !get().stems?.installed) {
+        get().requestStems(() => get().setChoice(id, choice));
+        return;
       }
-      if (!(audio ? AUDIO_FORMATS : VIDEO_FORMATS).includes(format)) format = audio ? AUDIO_FORMATS[0] : VIDEO_FORMATS[0];
-      patch(id, { quality, format });
-      get().updateSettings({ quality, ...(audio ? { audioFormat: format } : { videoFormat: format }) });
+      const kind = (q: string) => (isStems(q) ? "stems" : q === "audio" ? "audio" : "video");
+      let format = choice.format ?? d.format;
+      // Switching between video, audio and stems swaps in the matching kind of format.
+      if (choice.quality && kind(quality) !== kind(d.quality)) {
+        const audioFormat = settings.audioFormat;
+        format = kind(quality) === "stems" ? (STEM_FORMATS.includes(audioFormat) ? audioFormat : STEM_FORMATS[0]) : kind(quality) === "audio" ? audioFormat : settings.videoFormat;
+      }
+      if (!formatsFor(quality).includes(format)) format = formatsFor(quality)[0];
+      patch(id, { quality, format, ...(choice.stems ? { stemParts: choice.stems.parts, stemRest: choice.stems.rest } : {}) });
+      // New rows start from your last choice, but separating audio is never made the default.
+      if (!isStems(quality)) {
+        get().updateSettings({ quality, ...(isAudioQuality(quality) ? { audioFormat: format } : { videoFormat: format }) });
+      }
     },
 
     start() {
@@ -493,6 +663,7 @@ function restoreQueue(): Download[] {
     return saved.map((d) => ({
       ...blank(),
       ...d,
+      ...legacyStems(d),
       log: [],
       status: (["fetching", "queued", "downloading", "processing"] as Status[]).includes(d.status) ? "ready" : d.status,
       percent: d.status === "done" ? 100 : null,
@@ -502,6 +673,15 @@ function restoreQueue(): Download[] {
   } catch {
     return [];
   }
+}
+
+// Earlier builds stored "stems2" (vocals + instrumental) and "stems4" (all four parts) as the quality.
+function legacyStems(d: Download): Partial<Download> {
+  const quality = d.quality as string;
+  const fix: Partial<Download> = typeof (d.preset as unknown) === "string" ? { preset: null } : {};
+  if (quality === "stems2") return { ...fix, quality: "stems", stemParts: ["vocals"], stemRest: true };
+  if (quality === "stems4") return { ...fix, quality: "stems", stemParts: ["vocals", "drums", "bass", "other"], stemRest: false };
+  return fix;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;

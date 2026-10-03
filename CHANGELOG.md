@@ -2,6 +2,24 @@
 
 All notable changes to ytdlp-ui are listed here, newest first.
 
+## 0.4.0 - 2026-10-03
+
+### Added
+- **Separate audio.** Split the sound of any audio or video file into vocals, drums, bass, guitar, piano and other
+  sounds. Choose **Separate audio…** in a file's Quality menu, or press the new split button on a finished row, and tick
+  the parts you want; each one is saved as its own file.
+- Whatever you didn't tick can be saved as **one more file**: *instrumental* when you only chose vocals, *no drums*
+  when you only chose drums, otherwise *everything else*.
+- Saved as MP3 (320 kbps), FLAC or WAV (24-bit). The parts line up exactly with the original: same length, no delay.
+- Runs on your computer with Demucs, and your files are never uploaded. It is an optional add-on: the first time you
+  use it the app asks, then downloads about 0.8 GB (about 5 GB with the optional NVIDIA graphics card build) into its
+  own folder. **Settings > Separate audio** shows its size and removes it.
+- The add-on's install shows how far along it is, with a progress bar and a note on what each step is doing.
+
+### Notes
+- Guitar and piano use a second model. Piano is the least exact part, so the dialog says so.
+- Everything is decoded by FFmpeg first, so MP3 files are not shifted by the encoder's silence and video files work too.
+
 ## 0.3.0 - 2026-10-03
 
 ### Added

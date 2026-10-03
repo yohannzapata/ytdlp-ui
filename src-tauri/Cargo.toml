@@ -1,6 +1,6 @@
 [package]
 name = "ytdlp-ui"
-version = "0.3.0"
+version = "0.4.0"
 description = "A simple, modern desktop app for yt-dlp"
 authors = ["Yohann Joachim Zapata"]
 license = "MIT"

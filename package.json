@@ -1,7 +1,7 @@
 {
   "name": "ytdlp-ui",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A simple, modern desktop app for yt-dlp: download videos and playlists from YouTube and 1000+ sites as MP4 or MP3.",
   "author": "Yohann Joachim Zapata (https://github.com/yohannzapata)",
   "license": "MIT",
@@ -20,7 +20,11 @@
     "tauri",
     "react",
     "desktop-app",
-    "gui"
+    "gui",
+    "ffmpeg",
+    "demucs",
+    "stem-separation",
+    "vocal-remover"
   ],
   "type": "module",
   "scripts": {

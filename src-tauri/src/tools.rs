@@ -194,6 +194,11 @@ async fn install(app: &AppHandle, tool: Tool, bin: &Path, tmp: &Path) -> Result<
 }
 
 async fn download(app: &AppHandle, tool: Tool, url: &str, dest: &Path) -> Result<(), String> {
+    download_to(url, dest, |received, total| report(app, tool, "downloading", received, total, None)).await
+}
+
+/// Downloads `url` into `dest`, calling `progress(received, total)` a few times a second (total is 0 if unknown).
+pub(crate) async fn download_to(url: &str, dest: &Path, mut progress: impl FnMut(u64, u64)) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .user_agent(concat!("ytdlp-ui/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(20))
@@ -217,12 +222,12 @@ async fn download(app: &AppHandle, tool: Tool, url: &str, dest: &Path) -> Result
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         received += chunk.len() as u64;
         if last_report.elapsed() > Duration::from_millis(150) {
-            report(app, tool, "downloading", received, total, None);
+            progress(received, total);
             last_report = Instant::now();
         }
     }
     file.flush().await.map_err(|e| e.to_string())?;
-    report(app, tool, "downloading", received, total, None);
+    progress(received, total);
     Ok(())
 }
 
@@ -296,7 +301,7 @@ fn copy_wanted(dir: &Path, bin: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn make_executable(path: &Path) -> Result<(), String> {
+pub(crate) fn make_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

@@ -1,5 +1,6 @@
 mod media;
 mod settings;
+mod stems;
 mod tools;
 mod ytdlp;
 
@@ -19,6 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(ytdlp::Jobs::default())
+        .manage(stems::StemsInstall::default())
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
             settings::save_settings,
@@ -30,6 +32,11 @@ pub fn run() {
             ytdlp::cancel_download,
             media::probe_file,
             media::start_process,
+            stems::stems_status,
+            stems::stems_install,
+            stems::stems_cancel_install,
+            stems::stems_remove,
+            stems::start_separate,
             open_file,
             show_in_folder,
         ])

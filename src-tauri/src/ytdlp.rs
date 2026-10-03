@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
@@ -594,15 +594,32 @@ pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, req: Download
 pub(crate) fn forward_lines(stream: Option<impl AsyncRead + Unpin + Send + 'static>, tx: mpsc::UnboundedSender<String>) {
     let Some(stream) = stream else { return };
     tauri::async_runtime::spawn(async move {
+        // Progress bars (such as Python's tqdm) redraw a line with a carriage return, so both end a line.
         let mut reader = BufReader::new(stream);
-        let mut buf = Vec::new();
-        while matches!(reader.read_until(b'\n', &mut buf).await, Ok(n) if n > 0) {
-            let line = String::from_utf8_lossy(&buf).trim_end().to_string();
-            buf.clear();
-            if !line.is_empty() && tx.send(line).is_err() {
-                break;
+        let mut line: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let send = |line: &mut Vec<u8>| -> bool {
+            let text = String::from_utf8_lossy(line).trim_end().to_string();
+            line.clear();
+            text.is_empty() || tx.send(text).is_ok()
+        };
+        loop {
+            match reader.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    for &byte in &chunk[..n] {
+                        if byte == b'\n' || byte == b'\r' {
+                            if !send(&mut line) {
+                                return;
+                            }
+                        } else {
+                            line.push(byte);
+                        }
+                    }
+                }
             }
         }
+        send(&mut line);
     });
 }
 
@@ -678,7 +695,7 @@ pub fn cancel_all(app: &AppHandle) {
 }
 
 /// yt-dlp starts ffmpeg itself, so the whole process tree has to go.
-fn kill_tree(pid: u32, wait: bool) {
+pub(crate) fn kill_tree(pid: u32, wait: bool) {
     let kill = move || {
         #[cfg(windows)]
         {

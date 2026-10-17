@@ -1,5 +1,5 @@
 // Small helpers for turning numbers and yt-dlp messages into friendly text.
-import type { Quality } from "./api";
+import type { CompressChoice, Quality } from "./api";
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !isFinite(bytes)) return "";
@@ -81,10 +81,36 @@ export function stemsLabel({ parts, rest }: StemsChoice): string {
 
 /** "stems" is the quality choice that separates a file's sound; which parts is stored beside it. */
 export const isStems = (quality: string) => quality === "stems";
+/** "compress" makes a file smaller; how small is stored beside it. */
+export const isCompress = (quality: string) => quality === "compress";
+/** Choices that are a job of their own, run on the file (after downloading it, for a link). */
+export const isProcessing = (quality: string) => isStems(quality) || isCompress(quality);
+
+export const DEFAULT_COMPRESS: CompressChoice = { goal: { mode: "same" }, newerFormat: false };
+
+/** Sizes people aim for, in the megabytes (1,000,000 bytes) that upload limits are given in. */
+export function megabytes(bytes: number): string {
+  const mb = bytes / 1_000_000;
+  return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+export function compressLabel(choice: CompressChoice, hasVideo = true): string {
+  const goal = choice.goal;
+  if (goal.mode === "same") return hasVideo ? "Smaller, same look" : "Smaller, same sound";
+  return goal.half ? "Half the size" : `Up to ${megabytes(goal.bytes)}`;
+}
 /** Choices that produce audio only: plain audio, or stems. */
 export const isAudioQuality = (quality: string) => quality === "audio" || isStems(quality);
-export const formatsFor = (quality: string) =>
-  isStems(quality) ? STEM_FORMATS : quality === "audio" ? AUDIO_FORMATS : VIDEO_FORMATS;
+export const formatsFor = (quality: string, hasVideo = true) =>
+  isStems(quality)
+    ? STEM_FORMATS
+    : isCompress(quality)
+      ? hasVideo
+        ? ["mp4"]
+        : AUDIO_FORMATS
+      : quality === "audio"
+        ? AUDIO_FORMATS
+        : VIDEO_FORMATS;
 
 /** Quality choices shown for playlists, where each video's options aren't known up front. */
 export const STANDARD_HEIGHTS = [2160, 1440, 1080, 720, 480, 360];
@@ -95,7 +121,7 @@ export function qualityLabel(height: number): string {
 }
 
 export interface QualityChoice {
-  /** "best", a height such as "1080", "audio", or "stems" (separate the sound). */
+  /** "best", a height such as "1080", "audio", "compress" or "stems" (separate the sound). */
   value: string;
   label: string;
   height?: number;
@@ -111,9 +137,15 @@ export function qualityChoices(
   audioSize: number | null,
   file?: { hasVideo: boolean; hasAudio: boolean },
 ): QualityChoice[] {
-  // Separating the sound only makes sense for a file that has sound.
-  const stems: QualityChoice[] = file?.hasAudio ? [{ value: "stems", label: "Separate audio…" }] : [];
-  if (file && !file.hasVideo) return [{ value: "audio", label: "Audio only", size: null }, ...stems];
+  // Jobs that work on the file: making it smaller, and separating its sound (which needs sound).
+  const jobs: QualityChoice[] =
+    !file || file.hasAudio
+      ? [
+          { value: "compress", label: "Compress…" },
+          { value: "stems", label: "Separate audio…" },
+        ]
+      : [{ value: "compress", label: "Compress…" }];
+  if (file && !file.hasVideo) return [{ value: "audio", label: "Audio only", size: null }, ...jobs];
   if (!qualities) {
     return [
       { value: "best", label: "Best available" },
@@ -132,7 +164,7 @@ export function qualityChoices(
     },
     ...rest.map((q) => ({ value: String(q.height), label: qualityLabel(q.height), height: q.height, size: q.size })),
     { value: "audio", label: "Audio only", size: audioSize },
-    ...stems,
+    ...jobs,
   ];
 }
 
@@ -150,6 +182,8 @@ const STAGES: Record<string, string> = {
   VideoRemuxer: "Converting video…",
   EmbedThumbnail: "Adding cover art…",
   ReadFile: "Reading the file…",
+  LoadModel: "Starting the separation…",
+  FitSize: "Fitting the size…",
   SaveStems: "Saving the parts…",
   Metadata: "Adding details…",
   FFmpegMetadata: "Adding details…",

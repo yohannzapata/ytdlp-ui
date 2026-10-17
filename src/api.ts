@@ -68,6 +68,8 @@ export interface VideoInfo {
   thumbnail: string | null;
   qualities: Quality[];
   audioSize: number | null;
+  /** Frames per second of the video. */
+  fps: number | null;
 }
 
 export interface PlaylistEntry {
@@ -126,6 +128,50 @@ export interface SeparateRequest {
   rest: boolean;
   format: string;
   folder: string;
+  /** The file was downloaded only for this; it goes once the job is over. */
+  removeInput?: boolean;
+}
+
+/** How small to make a file: as small as it gets while it looks the same, or no bigger than a size. */
+export type CompressGoal = { mode: "same" } | { mode: "size"; bytes: number; /** chosen as "half the size" */ half?: boolean };
+
+export interface CompressChoice {
+  goal: CompressGoal;
+  /** The newer video format: smaller again, but slower to make, and not every device plays it. */
+  newerFormat: boolean;
+}
+
+/** What compressing would do, worked out before it runs. */
+export interface CompressPlan {
+  /** Shorter side of the video that comes out. */
+  height: number | null;
+  /** The frame rate, when it comes down. */
+  fps: number | null;
+  videoKbps: number | null;
+  /** About how big the result will be, when that can be known beforehand. */
+  estimate: number | null;
+  /** Why it can't be done. */
+  problem: string | null;
+  /** "Same look" won't save much: the file is already stored compactly. */
+  alreadySmall: boolean;
+  /** The file as it is now (0 when unknown). */
+  size: number;
+  duration: number | null;
+}
+
+/** A file, or what a site says about a link that hasn't been downloaded yet. */
+export type PlanSource =
+  | { path: string }
+  | { duration: number; height: number; fps: number | null; size: number | null; video: boolean };
+
+export interface CompressRequest {
+  id: string;
+  path: string;
+  choice: CompressChoice;
+  format: string;
+  folder: string;
+  options: DownloadOptions;
+  removeInput?: boolean;
 }
 
 export interface DownloadRequest {
@@ -137,6 +183,8 @@ export interface DownloadRequest {
   folder: string;
   subfolder: string | null;
   options: DownloadOptions;
+  /** Only the first step of separating or compressing: saved out of sight, as the site has it. */
+  forProcessing?: boolean;
 }
 
 export interface ProcessRequest {
@@ -177,6 +225,10 @@ export const api = {
   probeFile: (path: string) => invoke<MediaFile>("probe_file", { path }),
   startProcess: (req: ProcessRequest) => invoke<void>("start_process", { req }),
   startSeparate: (req: SeparateRequest) => invoke<void>("start_separate", { req }),
+  compressPlan: (source: PlanSource, choice: CompressChoice, format: string) =>
+    invoke<CompressPlan>("compress_plan", { source, choice: wireChoice(choice), format }),
+  startCompress: (req: CompressRequest) => invoke<void>("start_compress", { req: { ...req, choice: wireChoice(req.choice) } }),
+  discardSource: (path: string) => invoke<void>("discard_source", { path }),
   stemsStatus: () => invoke<StemsStatus>("stems_status"),
   stemsInstall: (gpu: boolean) => invoke<void>("stems_install", { gpu }),
   stemsCancelInstall: () => invoke<void>("stems_cancel_install"),
@@ -184,6 +236,12 @@ export const api = {
   openFile: (path: string) => invoke<void>("open_file", { path }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
 };
+
+/** "Half the size" is only how the size was chosen; the app works from the bytes. */
+function wireChoice(choice: CompressChoice): CompressChoice {
+  const goal = choice.goal.mode === "size" ? { mode: "size" as const, bytes: choice.goal.bytes } : choice.goal;
+  return { goal, newerFormat: choice.newerFormat };
+}
 
 /** Asks for a folder; resolves to null if the picker is dismissed. */
 export async function chooseFolder(current: string): Promise<string | null> {

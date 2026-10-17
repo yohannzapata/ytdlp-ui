@@ -19,24 +19,49 @@ use tokio::sync::mpsc;
 // ---------------------------------------------------------------------------
 // Reading a file
 
-struct VideoStream {
-    codec: String,
+#[derive(Default, Debug)]
+pub(crate) struct VideoStream {
+    pub(crate) codec: String,
     /// The shorter side in pixels, like the qualities of downloads (1080 for 1920x1080 and for 1080x1920).
-    short_side: u32,
-    portrait: bool,
+    pub(crate) short_side: u32,
+    /// The longer side in pixels.
+    pub(crate) long_side: u32,
+    /// As it is shown: phones store upright video sideways with a note to turn it, which counts here.
+    pub(crate) portrait: bool,
+    /// Frames per second, when the file says.
+    pub(crate) fps: Option<f64>,
 }
 
 /// What FFmpeg's ffprobe found in a file.
-struct Probe {
-    artist: Option<String>,
-    duration: Option<f64>,
-    size: u64,
-    video: Option<VideoStream>,
-    audio_codec: Option<String>,
+#[derive(Default, Debug)]
+pub(crate) struct Probe {
+    pub(crate) artist: Option<String>,
+    pub(crate) duration: Option<f64>,
+    pub(crate) size: u64,
+    pub(crate) video: Option<VideoStream>,
+    pub(crate) audio_codec: Option<String>,
+    /// Bits per second of the first audio track, when the file says.
+    pub(crate) audio_bitrate: Option<u64>,
+    pub(crate) audio_channels: Option<u32>,
     /// Stream number of embedded cover art, which is a "video" stream that isn't really video.
-    cover_index: Option<u32>,
+    pub(crate) cover_index: Option<u32>,
     /// Stream number of the first real video stream.
-    video_index: Option<u32>,
+    pub(crate) video_index: Option<u32>,
+}
+
+/// "30000/1001" or "25/1" as a number; "0/0" (unknown) as nothing.
+fn frame_rate(text: &str) -> Option<f64> {
+    let (top, bottom) = text.split_once('/')?;
+    let (top, bottom): (f64, f64) = (top.trim().parse().ok()?, bottom.trim().parse().ok()?);
+    (top > 0.0 && bottom > 0.0).then(|| top / bottom).filter(|fps| (1.0..=480.0).contains(fps))
+}
+
+/// Whether the picture is turned a quarter, which swaps its width and height on screen.
+fn quarter_turned(stream: &Value) -> bool {
+    let side_data = stream.get("side_data_list").and_then(Value::as_array).into_iter().flatten();
+    let from_side_data = side_data.filter_map(|d| d.get("rotation")).filter_map(Value::as_f64).next();
+    let from_tag = tag(stream, "rotate").and_then(|r| r.parse::<f64>().ok());
+    from_side_data.or(from_tag).is_some_and(|degrees| (degrees.abs().round() as i64) % 180 == 90)
 }
 
 fn tag(v: &Value, key: &str) -> Option<String> {
@@ -64,10 +89,7 @@ fn parse_probe(json: &Value) -> Probe {
             .and_then(Value::as_str)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0),
-        video: None,
-        audio_codec: None,
-        cover_index: None,
-        video_index: None,
+        ..Probe::default()
     };
 
     for stream in json.get("streams").and_then(Value::as_array).map_or(&[][..], Vec::as_slice) {
@@ -81,11 +103,25 @@ fn parse_probe(json: &Value) -> Probe {
                 } else if probe.video.is_none() {
                     let width = stream.get("width").and_then(Value::as_u64).unwrap_or(0) as u32;
                     let height = stream.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
-                    probe.video = Some(VideoStream { codec, short_side: width.min(height), portrait: width < height });
+                    let fps = ["avg_frame_rate", "r_frame_rate"]
+                        .iter()
+                        .find_map(|key| stream.get(*key).and_then(Value::as_str).and_then(frame_rate));
+                    probe.video = Some(VideoStream {
+                        codec,
+                        short_side: width.min(height),
+                        long_side: width.max(height),
+                        portrait: (width < height) != quarter_turned(stream),
+                        fps,
+                    });
                     probe.video_index = index;
                 }
             }
-            Some("audio") if probe.audio_codec.is_none() => probe.audio_codec = Some(codec),
+            Some("audio") if probe.audio_codec.is_none() => {
+                probe.audio_codec = Some(codec);
+                probe.audio_bitrate =
+                    stream.get("bit_rate").and_then(Value::as_str).and_then(|b| b.parse().ok()).filter(|b| *b > 0);
+                probe.audio_channels = stream.get("channels").and_then(Value::as_u64).map(|c| c as u32);
+            }
             _ => {}
         }
     }
@@ -99,7 +135,7 @@ fn ffprobe_path(app: &AppHandle) -> Result<PathBuf, String> {
     path.is_file().then_some(path).ok_or_else(|| "ffprobe isn't installed".into())
 }
 
-async fn probe(app: &AppHandle, path: &Path) -> Result<Probe, String> {
+pub(crate) async fn probe(app: &AppHandle, path: &Path) -> Result<Probe, String> {
     if path.is_dir() {
         return Err("This is a folder. Add the files inside it instead.".into());
     }
@@ -192,9 +228,9 @@ pub struct ProcessRequest {
     options: DownloadOptions,
 }
 
-const LOUDNORM: &str = "loudnorm=I=-16:TP=-1.5:LRA=11";
+pub(crate) const LOUDNORM: &str = "loudnorm=I=-16:TP=-1.5:LRA=11";
 
-fn strings<const N: usize>(items: [&str; N]) -> Vec<String> {
+pub(crate) fn strings<const N: usize>(items: [&str; N]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
 }
 
@@ -294,14 +330,14 @@ fn build_args(req: &ProcessRequest, p: &Probe, input: &Path, output: &Path) -> R
 
 /// Collects the `key=value` lines of `-progress` until a block ends, then reports how far along the job is.
 #[derive(Default)]
-struct Progress {
+pub(crate) struct Progress {
     done_seconds: Option<f64>,
     speed: Option<f64>,
 }
 
 impl Progress {
     /// Returns an event once per block, when FFmpeg writes its `progress=` line.
-    fn feed(&mut self, id: &str, line: &str, duration: Option<f64>) -> Option<DownloadEvent> {
+    pub(crate) fn feed(&mut self, id: &str, line: &str, duration: Option<f64>) -> Option<DownloadEvent> {
         let (key, value) = line.split_once('=')?;
         match key {
             "out_time_us" => self.done_seconds = value.trim().parse::<f64>().ok().map(|us| (us / 1_000_000.0).max(0.0)),
@@ -334,7 +370,7 @@ impl Progress {
     }
 }
 
-fn is_progress_key(line: &str) -> bool {
+pub(crate) fn is_progress_key(line: &str) -> bool {
     const KEYS: [&str; 11] = [
         "frame", "fps", "bitrate", "total_size", "out_time_us", "out_time_ms", "out_time", "dup_frames", "drop_frames",
         "speed", "progress",
@@ -439,25 +475,22 @@ mod tests {
 
     fn video_probe(codec: &str, audio: &str, short_side: u32, portrait: bool) -> Probe {
         Probe {
-            artist: None,
             duration: Some(100.0),
             size: 1,
-            video: Some(VideoStream { codec: codec.into(), short_side, portrait }),
+            video: Some(VideoStream { codec: codec.into(), short_side, portrait, ..VideoStream::default() }),
             audio_codec: Some(audio.into()),
-            cover_index: None,
             video_index: Some(0),
+            ..Probe::default()
         }
     }
 
     fn song_probe(codec: &str, with_cover: bool) -> Probe {
         Probe {
-            artist: None,
             duration: Some(200.0),
             size: 1,
-            video: None,
             audio_codec: Some(codec.into()),
             cover_index: with_cover.then_some(1),
-            video_index: None,
+            ..Probe::default()
         }
     }
 
@@ -502,6 +535,32 @@ mod tests {
         }));
         let video = clip.video.unwrap();
         assert_eq!((video.short_side, video.portrait, clip.video_index, clip.cover_index), (1080, true, Some(0), None));
+    }
+
+    #[test]
+    fn phone_videos_stored_sideways_count_as_upright() {
+        let phone = parse_probe(&json!({
+            "format": { "duration": "10" },
+            "streams": [
+                { "index": 0, "codec_type": "video", "codec_name": "hevc", "width": 1920, "height": 1080,
+                  "avg_frame_rate": "30000/1001", "side_data_list": [{ "side_data_type": "Display Matrix", "rotation": -90 }] },
+                { "index": 1, "codec_type": "audio", "codec_name": "aac", "bit_rate": "192000", "channels": 2 }
+            ]
+        }));
+        let video = phone.video.unwrap();
+        assert!(video.portrait, "a quarter turn makes 1920x1080 upright");
+        assert_eq!((video.short_side, video.long_side), (1080, 1920));
+        assert!((video.fps.unwrap() - 29.97).abs() < 0.01);
+        assert_eq!((phone.audio_bitrate, phone.audio_channels), (Some(192_000), Some(2)));
+
+        let old_tag = parse_probe(&json!({ "streams": [
+            { "index": 0, "codec_type": "video", "codec_name": "h264", "width": 1280, "height": 720,
+              "tags": { "rotate": "90" }, "r_frame_rate": "0/0" }
+        ]}));
+        let video = old_tag.video.unwrap();
+        assert!(video.portrait && video.fps.is_none());
+        assert_eq!(frame_rate("25/1"), Some(25.0));
+        assert_eq!(frame_rate("90000/1"), None, "timebases that aren't frame rates are ignored");
     }
 
     #[test]

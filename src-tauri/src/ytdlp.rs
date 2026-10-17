@@ -38,6 +38,8 @@ pub struct VideoInfo {
     qualities: Vec<Quality>,
     /// Estimated size of the best audio-only download.
     audio_size: Option<u64>,
+    /// Frames per second of the video.
+    fps: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +118,7 @@ fn parse_video(v: &Value) -> VideoInfo {
         thumbnail: text(v, "thumbnail"),
         qualities: by_height.into_iter().rev().map(|(height, size)| Quality { height, size }).collect(),
         audio_size,
+        fps: number(v, "fps").or_else(|| formats.iter().filter_map(|f| number(f, "fps")).reduce(f64::max)),
     }
 }
 
@@ -239,6 +242,10 @@ pub struct DownloadRequest {
     /// Playlist downloads go into a folder named after the playlist.
     subfolder: Option<String>,
     options: DownloadOptions,
+    /// Only the first step of another job (separating or compressing): it goes into a hidden folder, as it comes
+    /// from the site, without extras the next step would only throw away (subtitles, split chapters, cover art).
+    #[serde(default)]
+    for_processing: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -278,6 +285,10 @@ pub struct Jobs {
 
 fn format_args(req: &DownloadRequest) -> Vec<String> {
     let format = req.format.as_str();
+    if req.audio_only && req.for_processing {
+        // The best sound as the site has it; converting it here would only lose quality before the next step.
+        return ["-f", "ba/b"].map(String::from).to_vec();
+    }
     if req.audio_only {
         let selector = match format {
             "m4a" => "ba[ext=m4a]/ba/b",
@@ -416,10 +427,56 @@ fn download_args(app: &AppHandle, req: &DownloadRequest, staging: &Path) -> Resu
 
 const STAGING: &str = ".ytdlp-ui";
 
+fn short_id(id: &str) -> String {
+    id.chars().filter(char::is_ascii_alphanumeric).take(8).collect()
+}
+
+/// Where a download that is only the first step of another job goes: hidden, next to the jobs' staging folders.
+pub(crate) fn source_dir(folder: &Path, id: &str) -> PathBuf {
+    folder.join(STAGING).join(format!("{}-source", short_id(id)))
+}
+
+/// Deletes a source download (and its hidden folder) once the job that needed it is over.
+/// It only ever touches `<download folder>/.ytdlp-ui/<id>-source`, never a file the user chose.
+pub(crate) fn remove_source(file: &Path) {
+    let Some(dir) = file.parent() else { return };
+    let named = dir.file_name().is_some_and(|n| n.to_string_lossy().ends_with("-source"));
+    let hidden = dir.parent().and_then(Path::file_name).is_some_and(|n| n == STAGING);
+    if !(named && hidden) {
+        return;
+    }
+    for _ in 0..20 {
+        if std::fs::remove_dir_all(dir).is_ok() || !dir.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    if let Some(root) = dir.parent() {
+        let _ = std::fs::remove_dir(root); // only succeeds once nothing else is using it
+    }
+}
+
+/// Removes a source download when dropped, so it goes however the job ends, even when it never started.
+pub(crate) struct SourceGuard(pub(crate) Option<PathBuf>);
+
+impl Drop for SourceGuard {
+    fn drop(&mut self) {
+        if let Some(file) = self.0.take() {
+            remove_source(&file);
+        }
+    }
+}
+
+/// A source download whose next step won't happen after all (the row was removed).
+#[tauri::command]
+pub async fn discard_source(path: String) {
+    // Deleting can wait on a file that is still closing; never on the window's thread.
+    let _ = tokio::task::spawn_blocking(move || remove_source(Path::new(&path))).await;
+}
+
 pub(crate) fn staging_dir(folder: &Path, id: &str) -> Result<PathBuf, String> {
     let root = folder.join(STAGING);
-    let short_id: String = id.chars().filter(char::is_ascii_alphanumeric).take(8).collect();
-    let dir = root.join(short_id);
+    let dir = root.join(short_id(id));
     std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't write to the download folder: {e}"))?;
     #[cfg(windows)]
     {
@@ -511,12 +568,20 @@ pub(crate) fn remove_staging(dir: &Path) {
 }
 
 #[tauri::command]
-pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, req: DownloadRequest) -> Result<(), String> {
+pub async fn start_download(app: AppHandle, jobs: State<'_, Jobs>, mut req: DownloadRequest) -> Result<(), String> {
     let folder = PathBuf::from(&req.folder);
     if !folder.is_dir() {
         return Err("The download folder doesn't exist".into());
     }
+    if req.for_processing {
+        req.options.subtitles = "off".into();
+        req.options.embed_thumbnail = false;
+        if req.options.chapters == "split" {
+            req.options.chapters = "embed".into();
+        }
+    }
     let destination = match &req.subfolder {
+        _ if req.for_processing => source_dir(&folder, &req.id),
         Some(sub) => folder.join(safe_folder_name(sub)),
         None => folder.clone(),
     };
@@ -691,6 +756,14 @@ pub fn cancel_all(app: &AppHandle) {
     for (pid, staging) in running {
         kill_tree(pid, true);
         remove_staging(&staging);
+        // A job that started from a link also has the download it was working on.
+        if let Some(name) = staging.file_name() {
+            let source = staging.with_file_name(format!("{}-source", name.to_string_lossy()));
+            let _ = std::fs::remove_dir_all(&source);
+            if let Some(root) = source.parent() {
+                let _ = std::fs::remove_dir(root);
+            }
+        }
     }
 }
 
@@ -724,6 +797,32 @@ pub(crate) fn kill_tree(pid: u32, wait: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_downloads_are_removed_only_from_their_hidden_folder() {
+        let root = std::env::temp_dir().join(format!("ytdlp-ui-source-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let source = source_dir(&root, "abcd1234-ffff");
+        assert_eq!(source, root.join(".ytdlp-ui").join("abcd1234-source"));
+        std::fs::create_dir_all(&source).unwrap();
+        let song = source.join("Song.webm");
+        std::fs::write(&song, "x").unwrap();
+
+        // The user's own files are never touched, even when asked to.
+        let own = root.join("Song.webm");
+        std::fs::write(&own, "mine").unwrap();
+        remove_source(&own);
+        let lookalike = root.join("x-source").join("Song.webm");
+        std::fs::create_dir_all(lookalike.parent().unwrap()).unwrap();
+        std::fs::write(&lookalike, "mine").unwrap();
+        remove_source(&lookalike);
+        assert!(own.exists() && lookalike.exists());
+
+        drop(SourceGuard(Some(song.clone())));
+        assert!(!source.exists() && !root.join(".ytdlp-ui").exists(), "the hidden folders go with it");
+        drop(SourceGuard(None));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn cleans_error_prefixes() {
@@ -786,7 +885,16 @@ mod tests {
             folder: String::new(),
             subfolder: None,
             options,
+            for_processing: false,
         }
+    }
+
+    #[test]
+    fn a_download_for_processing_keeps_the_sound_as_it_is() {
+        let mut req = request(true, "opus", DownloadOptions::default());
+        assert!(format_args(&req).contains(&"-x".to_string()), "a normal audio download converts");
+        req.for_processing = true;
+        assert_eq!(format_args(&req), ["-f", "ba/b"]);
     }
 
     #[test]

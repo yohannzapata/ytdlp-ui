@@ -17,6 +17,7 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowClockwiseRegular,
+  ArrowMinimizeRegular,
   ArrowSplitRegular,
   ArrowDownload24Regular,
   CheckmarkCircleFilled,
@@ -27,12 +28,14 @@ import {
 } from "@fluentui/react-icons";
 import { api } from "../api";
 import {
+  compressLabel,
   formatBytes,
   formatDuration,
   formatEta,
   formatsFor,
   friendlyError,
   isAudioQuality,
+  isCompress,
   isStems,
   stageLabel,
   stemsLabel,
@@ -133,9 +136,19 @@ const useStyles = makeStyles({
   emptyText: { color: tokens.colorNeutralForeground3, maxWidth: "380px" },
 });
 
+/** What the row is doing, when it does more than download: a link is downloaded first, then separated or compressed. */
+function stepName(d: Download): string | null {
+  if (d.sourceStep) return "Downloading";
+  if (isStems(d.quality)) return "Separating";
+  if (isCompress(d.quality)) return "Compressing";
+  return null;
+}
+
 function progressText(d: Download): string {
-  if (d.percent == null) return "Starting…";
+  const step = stepName(d);
+  if (d.percent == null) return step ? `${step}…` : "Starting…";
   const parts = [
+    step,
     d.parts > 1 ? (d.part === 0 ? "Video" : "Audio") : null,
     `${Math.floor(d.percent)}%`,
     d.speed ? `${formatBytes(d.speed)}/s` : null,
@@ -207,13 +220,19 @@ function IconButton({ label, icon, onClick }: { label: string; icon: ReactElemen
 
 function Row({ d, selected }: { d: Download; selected: boolean }) {
   const styles = useStyles();
-  const { select, setChoice, chooseStems, cancel, retry, remove } = useApp.getState();
-  const audio = isAudioQuality(d.quality);
+  const { select, setChoice, chooseStems, chooseCompress, cancel, retry, remove } = useApp.getState();
+  const audio = isAudioQuality(d.quality) || (isCompress(d.quality) && !d.hasVideo);
   const choices = choicesFor(d);
   const current = choices.find((c) => c.value === d.quality) ?? choices[0];
   // The menu entry is always "Separate audio…"; the row itself says which parts.
-  const currentLabel = d.quality === "stems" ? stemsLabel({ parts: d.stemParts, rest: d.stemRest }) : current.label;
-  const formats = formatsFor(d.quality);
+  const currentLabel = isStems(d.quality)
+    ? stemsLabel({ parts: d.stemParts, rest: d.stemRest })
+    : isCompress(d.quality)
+      ? compressLabel(d.compress, d.hasVideo)
+      : current.label;
+  const formats = formatsFor(d.quality, d.hasVideo);
+  // What a finished row's file holds, for the buttons that work on it.
+  const resultHasVideo = d.hasVideo && d.quality !== "audio" && !isStems(d.quality);
   const editable = d.status === "ready" || d.status === "error" || d.status === "canceled";
   const subtitle =
     d.needsInfo && d.status !== "ready"
@@ -246,8 +265,9 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
         selectedOptions={[current.value]}
         onOptionSelect={(_, data) => {
           if (!data.optionValue) return;
-          // Which parts to separate is asked in a dialog of its own, also when changing an earlier choice.
+          // Which parts to separate, or how small to make it, is asked in a dialog of its own.
           if (data.optionValue === "stems") chooseStems({ id: d.id });
+          else if (data.optionValue === "compress") chooseCompress({ id: d.id });
           else setChoice(d.id, { quality: data.optionValue });
         }}
       >
@@ -320,6 +340,13 @@ function Row({ d, selected }: { d: Download; selected: boolean }) {
             <IconButton label="Open" icon={<OpenRegular />} onClick={openFile} />
             <IconButton label="Show in folder" icon={<FolderOpenRegular />} onClick={() => api.showInFolder(d.filepath!)} />
           </>
+        )}
+        {d.status === "done" && d.filepath && !isStems(d.quality) && (
+          <IconButton
+            label="Compress"
+            icon={<ArrowMinimizeRegular />}
+            onClick={() => chooseCompress({ path: d.filepath!, hasVideo: resultHasVideo })}
+          />
         )}
         {d.status === "done" && d.filepath && !isStems(d.quality) && (d.source === "link" || d.hasAudio) && (
           <IconButton label="Separate audio" icon={<ArrowSplitRegular />} onClick={() => chooseStems({ path: d.filepath! })} />

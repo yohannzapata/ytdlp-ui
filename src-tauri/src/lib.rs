@@ -1,3 +1,4 @@
+mod compress;
 mod media;
 mod settings;
 mod stems;
@@ -30,8 +31,11 @@ pub fn run() {
             ytdlp::fetch_info,
             ytdlp::start_download,
             ytdlp::cancel_download,
+            ytdlp::discard_source,
             media::probe_file,
             media::start_process,
+            compress::compress_plan,
+            compress::start_compress,
             stems::stems_status,
             stems::stems_install,
             stems::stems_cancel_install,

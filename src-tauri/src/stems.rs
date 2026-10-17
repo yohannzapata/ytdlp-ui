@@ -11,7 +11,7 @@
 //! asked for: each chosen part on its own, plus (optionally) one more file that mixes all the parts that weren't chosen.
 
 use crate::tools::{self, Tool};
-use crate::ytdlp::{forward_lines, kill_tree, remove_staging, staging_dir, DownloadEvent, Jobs};
+use crate::ytdlp::{forward_lines, kill_tree, remove_staging, staging_dir, DownloadEvent, Jobs, SourceGuard};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -429,6 +429,9 @@ pub struct SeparateRequest {
     /// "mp3" | "flac" | "wav"
     format: String,
     folder: String,
+    /// The file was downloaded only for this; it goes once the job is over.
+    #[serde(default)]
+    remove_input: bool,
 }
 
 /// One file to write: one part, or the mix of several.
@@ -599,6 +602,8 @@ async fn separate(app: &AppHandle, id: &str, reading: tokio::process::Child, mut
         return Err(Some(if message.contains("matches no streams") { "This file has no audio".into() } else { message }));
     }
 
+    // Loading the model takes a while the first time (and longer still on a graphics card), before any progress.
+    let _ = app.emit("download", DownloadEvent::Stage { id: id.to_string(), name: "LoadModel".into() });
     let spawned = job.demucs.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true).spawn();
     let mut child = spawned.map_err(|e| Some(format!("Couldn't start Demucs: {e}")))?;
     if let Some(pid) = child.id() {
@@ -674,6 +679,7 @@ pub async fn start_separate(app: AppHandle, jobs: State<'_, Jobs>, req: Separate
         return Err("Audio separation isn't installed yet. Install it in Settings.".into());
     }
     let input = PathBuf::from(&req.path);
+    let source = SourceGuard(req.remove_input.then(|| input.clone()));
     if !input.is_file() {
         return Err("No such file or directory".into());
     }
@@ -722,6 +728,7 @@ pub async fn start_separate(app: AppHandle, jobs: State<'_, Jobs>, req: Separate
     let job = Job { ffmpeg, demucs, parts_dir: out_root.join(plan.model), plan, format: req.format, staging: staging.clone(), folder, track };
     tauri::async_runtime::spawn(async move {
         let result = separate(&app, &id, reading, job).await.map(|p| p.display().to_string());
+        drop(source);
 
         let jobs = app.state::<Jobs>();
         jobs.running.lock().unwrap().remove(&id);

@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import {
   api,
+  type CompressChoice,
   type DownloadEvent,
   type DownloadOptions,
+  type PlanSource,
   type PlaylistInfo,
   type Quality,
   type Settings,
@@ -12,17 +14,24 @@ import {
   type VideoInfo,
 } from "./api";
 import {
+  AUDIO_FORMATS,
+  DEFAULT_COMPRESS,
   DEFAULT_STEMS,
   STANDARD_HEIGHTS,
   STEM_FORMATS,
   STEM_PARTS,
   formatsFor,
   isAudioQuality,
+  isCompress,
+  isProcessing,
   isStems,
   qualityChoices,
   startingQuality,
   type StemsChoice,
 } from "./format";
+
+/** A job chosen for a file before it has been read, such as "separate it" from a finished row. */
+export type Preset = { stems: StemsChoice } | { compress: CompressChoice };
 
 export type Status = "fetching" | "ready" | "queued" | "downloading" | "processing" | "done" | "error" | "canceled";
 
@@ -38,8 +47,8 @@ export interface Download {
   hasVideo: boolean;
   /** For a file: whether it has sound (only then can it be separated into parts). */
   hasAudio: boolean;
-  /** Parts to separate it into, chosen before the file has been read. */
-  preset: StemsChoice | null;
+  /** What to do with it, chosen before the file has been read. */
+  preset: Preset | null;
   /** For a file: its size in bytes. */
   fileSize: number | null;
   title: string;
@@ -54,6 +63,16 @@ export interface Download {
   /** With the "stems" quality: the parts to save as their own files, and whether to also save the rest. */
   stemParts: string[];
   stemRest: boolean;
+  /** With the "compress" quality: how small to make it. */
+  compress: CompressChoice;
+  /** Frames per second, when the site says. */
+  fps: number | null;
+  /** For a link being compressed to a size: the resolution it will most likely end up at, so it isn't downloaded bigger. */
+  compressHeight: number | null;
+  /** For a link that is separated or compressed: the download it works from, once that's done. */
+  sourcePath: string | null;
+  /** True while that download runs (the first of the two steps). */
+  sourceStep: boolean;
   format: string;
   /** Playlist downloads go into a folder named after the playlist. */
   subfolder: string | null;
@@ -86,6 +105,35 @@ const LOG_LINES = 300;
 const MAX_INFO_LOOKUPS = 3;
 const STORAGE_KEY = "ytdlp-ui.queue.v1";
 const STEMS_KEY = "ytdlp-ui.stems.v1";
+const COMPRESS_KEY = "ytdlp-ui.compress.v1";
+
+/** How small the last file was made, so the next one starts from that. */
+function lastCompressChoice(): CompressChoice {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COMPRESS_KEY) ?? "null") as CompressChoice | null;
+    const goal = saved?.goal;
+    if (goal && (goal.mode === "same" || (goal.mode === "size" && goal.bytes > 0))) {
+      return { goal, newerFormat: !!saved.newerFormat };
+    }
+  } catch {
+    /* nothing remembered */
+  }
+  return DEFAULT_COMPRESS;
+}
+
+function rememberCompressChoice(choice: CompressChoice) {
+  try {
+    localStorage.setItem(COMPRESS_KEY, JSON.stringify(choice));
+  } catch {
+    /* the choice just won't be remembered */
+  }
+}
+
+/** The audio format a compressed sound file keeps: its own when the app can write it. */
+function audioFormatOf(path: string, fallback: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return AUDIO_FORMATS.includes(ext) ? ext : AUDIO_FORMATS.includes(fallback) ? fallback : AUDIO_FORMATS[0];
+}
 
 /** The parts chosen last time, so the next file starts from them. */
 function lastStemsChoice(): StemsChoice {
@@ -123,6 +171,15 @@ interface AppState {
   stemsPrompt: { then: (() => void) | null } | null;
   /** Set while the "which parts?" dialog is open: for a row of the list (`id`) or a finished file (`path`). */
   stemsPicker: { id: string | null; path: string | null; initial: StemsChoice } | null;
+  /** Set while the "how small?" dialog is open: for a row of the list (`id`) or a finished file (`path`). */
+  compressPicker: {
+    id: string | null;
+    path: string | null;
+    hasVideo: boolean;
+    format: string;
+    source: PlanSource;
+    initial: CompressChoice;
+  } | null;
 
   load(): Promise<void>;
   refreshTools(): Promise<void>;
@@ -131,11 +188,16 @@ interface AppState {
 
   /** Adds every link found in `text`; returns how many. */
   addLinks(text: string): number;
-  addFiles(paths: string[], preset?: StemsChoice): number;
+  addFiles(paths: string[], preset?: Preset): number;
   /** Opens the "which parts?" dialog for a row of the list, or for a finished file (which is then added as a row). */
   chooseStems(target: { id: string } | { path: string }): void;
   confirmStems(choice: StemsChoice): void;
   dismissStemsPicker(): void;
+  /** Opens the "how small?" dialog for a row of the list, or for a finished file (which is then added as a row). */
+  chooseCompress(target: { id: string } | { path: string; hasVideo: boolean }): void;
+  /** `height` is where the plan expects the video to end up, so a link isn't downloaded bigger than that. */
+  confirmCompress(choice: CompressChoice, height: number | null): void;
+  dismissCompressPicker(): void;
   refreshStems(): Promise<void>;
   requestStems(then?: () => void): void;
   dismissStemsPrompt(): void;
@@ -147,7 +209,10 @@ interface AppState {
   dismissPlaylist(id: string): void;
 
   select(id: string | null): void;
-  setChoice(id: string, choice: { quality?: string; format?: string; stems?: StemsChoice }): void;
+  setChoice(
+    id: string,
+    choice: { quality?: string; format?: string; stems?: StemsChoice; compress?: CompressChoice; compressHeight?: number | null },
+  ): void;
   start(): void;
   stopAll(): void;
   cancel(id: string): void;
@@ -171,6 +236,11 @@ const blank = (): Omit<Download, "id" | "url" | "title" | "quality" | "format"> 
   preset: null,
   stemParts: DEFAULT_STEMS.parts,
   stemRest: DEFAULT_STEMS.rest,
+  compress: DEFAULT_COMPRESS,
+  compressHeight: null,
+  fps: null,
+  sourcePath: null,
+  sourceStep: false,
   fileSize: null,
   channel: null,
   duration: null,
@@ -213,20 +283,55 @@ export const useApp = create<AppState>((set, get) => {
     for (const d of downloads) {
       if (active >= settings.maxConcurrent) break;
       if (d.status !== "queued") continue;
-      // A separation uses every processor core, so only one runs at a time; the others wait their turn.
-      if (isStems(d.quality) && get().downloads.some((x) => ACTIVE.includes(x.status) && isStems(x.quality))) continue;
+      // A link that is separated or compressed is downloaded first, as a step of its own.
+      const needsSource = d.source === "link" && isProcessing(d.quality) && !d.sourcePath;
+      // Separating and compressing use every processor core, so one of each runs at a time; the others wait.
+      const busy = get().downloads.some(
+        (x) => x.id !== d.id && ACTIVE.includes(x.status) && !x.sourceStep && x.quality === d.quality,
+      );
+      if (isProcessing(d.quality) && !needsSource && busy) continue;
       active++;
-      patch(d.id, { status: "downloading", percent: null, error: null, stage: null, log: [] });
+      // The second step of a link keeps the log of the first.
+      patch(d.id, { status: "downloading", percent: null, error: null, stage: null, sourceStep: needsSource, ...(d.sourcePath ? {} : { log: [] }) });
       const audioOnly = d.quality === "audio";
-      const maxHeight = audioOnly || d.quality === "best" ? null : Number(d.quality);
-      const run = isStems(d.quality)
+      const maxHeight = audioOnly || d.quality === "best" || isProcessing(d.quality) ? null : Number(d.quality);
+      const input = d.sourcePath ?? d.path ?? d.url;
+      const removeInput = d.sourcePath !== null;
+      const run = needsSource
+        ? api.startDownload({
+            id: d.id,
+            url: d.url,
+            // Separating only needs the sound; a size goal only needs the resolution it will end up at.
+            audioOnly: isStems(d.quality) || !d.hasVideo,
+            maxHeight:
+              isCompress(d.quality) && d.compress.goal.mode === "size" && d.compressHeight
+                ? Math.max(d.compressHeight, 720)
+                : null,
+            format: "mkv",
+            folder: settings.downloadDir,
+            subfolder: null,
+            options: settings.options,
+            forProcessing: true,
+          })
+        : isStems(d.quality)
         ? api.startSeparate({
             id: d.id,
-            path: d.path ?? d.url,
+            path: input,
             parts: d.stemParts,
             rest: d.stemRest,
             format: d.format,
             folder: settings.downloadDir,
+            removeInput,
+          })
+        : isCompress(d.quality)
+        ? api.startCompress({
+            id: d.id,
+            path: input,
+            choice: d.compress,
+            format: d.format,
+            folder: settings.downloadDir,
+            options: settings.options,
+            removeInput,
           })
         : d.source === "file"
           ? api.startProcess({
@@ -249,7 +354,8 @@ export const useApp = create<AppState>((set, get) => {
               options: settings.options,
             });
       run.catch((err) => {
-          patch(d.id, { status: "error", error: String(err) });
+          // A step that couldn't start has already removed its source download.
+          patch(d.id, { status: "error", error: String(err), sourcePath: null, sourceStep: false });
           pump();
         });
     }
@@ -287,8 +393,11 @@ export const useApp = create<AppState>((set, get) => {
           ? [info.height, ...STANDARD_HEIGHTS.filter((h) => h < info.height!)].map((height) => ({ height, size: null }))
           : [];
       const choices = qualityChoices(qualities, null, { hasVideo: info.hasVideo, hasAudio: info.hasAudio });
-      const separate = item.preset !== null && choices.some((c) => c.value === "stems");
-      const quality = separate ? "stems" : startingQuality(settings.quality, choices);
+      const preset = item.preset;
+      const separate = preset !== null && "stems" in preset && choices.some((c) => c.value === "stems");
+      const shrink = preset !== null && "compress" in preset && choices.some((c) => c.value === "compress");
+      const quality = separate ? "stems" : shrink ? "compress" : startingQuality(settings.quality, choices);
+      const shrinkFormat = info.hasVideo ? "mp4" : audioFormatOf(item.path ?? item.url, settings.audioFormat);
       const stemFormat = STEM_FORMATS.includes(settings.audioFormat) ? settings.audioFormat : STEM_FORMATS[0];
       patch(item.id, {
         hasAudio: info.hasAudio,
@@ -301,8 +410,15 @@ export const useApp = create<AppState>((set, get) => {
         hasVideo: info.hasVideo,
         fileSize: info.size,
         quality,
-        ...(separate ? { stemParts: item.preset!.parts, stemRest: item.preset!.rest } : {}),
-        format: isStems(quality) ? stemFormat : quality === "audio" ? settings.audioFormat : settings.videoFormat,
+        ...(separate && "stems" in preset ? { stemParts: preset.stems.parts, stemRest: preset.stems.rest } : {}),
+        ...(shrink && "compress" in preset ? { compress: preset.compress } : {}),
+        format: isStems(quality)
+          ? stemFormat
+          : isCompress(quality)
+            ? shrinkFormat
+            : quality === "audio"
+              ? settings.audioFormat
+              : settings.videoFormat,
         needsInfo: false,
         status: settings.autoStart ? "queued" : "ready",
       });
@@ -344,6 +460,8 @@ export const useApp = create<AppState>((set, get) => {
       thumbnail: info.thumbnail,
       qualities: info.qualities,
       audioSize: info.audioSize,
+      hasVideo: info.qualities.length > 0,
+      fps: info.fps,
       url: info.url || get().downloads.find((d) => d.id === id)?.url || "",
       quality,
       format,
@@ -363,6 +481,7 @@ export const useApp = create<AppState>((set, get) => {
     stemsInstall: null,
     stemsPrompt: null,
     stemsPicker: null,
+    compressPicker: null,
 
     async load() {
       const [settings] = await Promise.all([api.getSettings(), get().refreshTools(), get().refreshStems()]);
@@ -473,7 +592,7 @@ export const useApp = create<AppState>((set, get) => {
         get().setChoice(picker.id, { quality: "stems", stems: choice });
       } else if (picker.path) {
         const path = picker.path;
-        const go = () => get().addFiles([path], choice);
+        const go = () => get().addFiles([path], { stems: choice });
         if (get().stems?.installed) go();
         else get().requestStems(go);
       }
@@ -481,6 +600,61 @@ export const useApp = create<AppState>((set, get) => {
 
     dismissStemsPicker() {
       set({ stemsPicker: null });
+    },
+
+    chooseCompress(target) {
+      const settings = get().settings;
+      if (!settings) return;
+      if ("id" in target) {
+        const d = get().downloads.find((x) => x.id === target.id);
+        if (!d) return;
+        const best = d.qualities?.[0];
+        const source: PlanSource =
+          d.source === "file"
+            ? { path: d.path ?? d.url }
+            : {
+                duration: d.duration ?? 0,
+                height: best?.height ?? 1080,
+                fps: d.fps,
+                // A quality's size already counts its sound.
+                size: best?.size ?? null,
+                video: d.hasVideo,
+              };
+        set({
+          compressPicker: {
+            id: d.id,
+            path: null,
+            hasVideo: d.hasVideo,
+            format: d.hasVideo ? "mp4" : audioFormatOf(d.path ?? "", settings.audioFormat),
+            source,
+            initial: isCompress(d.quality) ? d.compress : lastCompressChoice(),
+          },
+        });
+      } else {
+        set({
+          compressPicker: {
+            id: null,
+            path: target.path,
+            hasVideo: target.hasVideo,
+            format: target.hasVideo ? "mp4" : audioFormatOf(target.path, settings.audioFormat),
+            source: { path: target.path },
+            initial: lastCompressChoice(),
+          },
+        });
+      }
+    },
+
+    confirmCompress(choice, height) {
+      const picker = get().compressPicker;
+      if (!picker) return;
+      set({ compressPicker: null });
+      rememberCompressChoice(choice);
+      if (picker.id) get().setChoice(picker.id, { quality: "compress", compress: choice, compressHeight: height });
+      else if (picker.path) get().addFiles([picker.path], { compress: choice });
+    },
+
+    dismissCompressPicker() {
+      set({ compressPicker: null });
     },
 
     async refreshStems() {
@@ -548,17 +722,37 @@ export const useApp = create<AppState>((set, get) => {
         get().requestStems(() => get().setChoice(id, choice));
         return;
       }
-      const kind = (q: string) => (isStems(q) ? "stems" : q === "audio" ? "audio" : "video");
+      const kind = (q: string) =>
+        isStems(q) ? "stems" : isCompress(q) ? (d.hasVideo ? "compress" : "audio") : q === "audio" ? "audio" : "video";
       let format = choice.format ?? d.format;
-      // Switching between video, audio and stems swaps in the matching kind of format.
+      // Switching between video, audio, stems and compressing swaps in the matching kind of format.
       if (choice.quality && kind(quality) !== kind(d.quality)) {
         const audioFormat = settings.audioFormat;
-        format = kind(quality) === "stems" ? (STEM_FORMATS.includes(audioFormat) ? audioFormat : STEM_FORMATS[0]) : kind(quality) === "audio" ? audioFormat : settings.videoFormat;
+        format =
+          kind(quality) === "stems"
+            ? STEM_FORMATS.includes(audioFormat)
+              ? audioFormat
+              : STEM_FORMATS[0]
+            : kind(quality) === "compress"
+              ? "mp4"
+              : kind(quality) === "audio"
+                ? audioFormat
+                : settings.videoFormat;
       }
-      if (!formatsFor(quality).includes(format)) format = formatsFor(quality)[0];
-      patch(id, { quality, format, ...(choice.stems ? { stemParts: choice.stems.parts, stemRest: choice.stems.rest } : {}) });
-      // New rows start from your last choice, but separating audio is never made the default.
-      if (!isStems(quality)) {
+      const formats = formatsFor(quality, d.hasVideo);
+      if (!formats.includes(format)) format = formats[0];
+      // A link downloaded for a job that's no longer wanted doesn't need to be kept.
+      const dropSource = d.sourcePath !== null && quality !== d.quality;
+      if (dropSource) api.discardSource(d.sourcePath!).catch(console.error);
+      patch(id, {
+        quality,
+        format,
+        ...(dropSource ? { sourcePath: null } : {}),
+        ...(choice.stems ? { stemParts: choice.stems.parts, stemRest: choice.stems.rest } : {}),
+        ...(choice.compress ? { compress: choice.compress, compressHeight: choice.compressHeight ?? null } : {}),
+      });
+      // New rows start from your last choice, but separating and compressing are never made the default.
+      if (!isProcessing(quality)) {
         get().updateSettings({ quality, ...(isAudioQuality(quality) ? { audioFormat: format } : { videoFormat: format }) });
       }
     },
@@ -603,6 +797,8 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     remove(id) {
+      const d = get().downloads.find((x) => x.id === id);
+      if (d?.sourcePath && !ACTIVE.includes(d.status)) api.discardSource(d.sourcePath).catch(console.error);
       get().cancel(id);
       set((s) => ({
         downloads: s.downloads.filter((d) => d.id !== id),
@@ -618,6 +814,9 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     clearAll() {
+      for (const d of get().downloads) {
+        if (d.sourcePath && !ACTIVE.includes(d.status)) api.discardSource(d.sourcePath).catch(console.error);
+      }
       get().stopAll();
       set({ downloads: [], selectedId: null });
     },
@@ -645,12 +844,18 @@ export const useApp = create<AppState>((set, get) => {
             ),
           }));
           break;
-        case "finished":
-          if (event.ok) patch(event.id, { status: "done", filepath: event.filepath, percent: 100 });
-          else if (event.canceled) patch(event.id, { status: "canceled" });
-          else patch(event.id, { status: "error", error: event.error });
+        case "finished": {
+          const d = get().downloads.find((x) => x.id === event.id);
+          const done = { sourcePath: null, sourceStep: false };
+          if (event.ok && d?.sourceStep && event.filepath) {
+            // That was only the download; separating or compressing it comes next.
+            patch(event.id, { status: "queued", sourcePath: event.filepath, sourceStep: false, percent: null, speed: null, eta: null });
+          } else if (event.ok) patch(event.id, { status: "done", filepath: event.filepath, percent: 100, ...done });
+          else if (event.canceled) patch(event.id, { status: "canceled", ...done });
+          else patch(event.id, { status: "error", error: event.error, ...done });
           pump();
           break;
+        }
       }
     },
   };
@@ -660,10 +865,15 @@ export const useApp = create<AppState>((set, get) => {
 function restoreQueue(): Download[] {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Download[];
+    for (const d of saved) {
+      if (d.sourcePath) api.discardSource(d.sourcePath).catch(() => {});
+    }
     return saved.map((d) => ({
       ...blank(),
       ...d,
       ...legacyStems(d),
+      sourcePath: null,
+      sourceStep: false,
       log: [],
       status: (["fetching", "queued", "downloading", "processing"] as Status[]).includes(d.status) ? "ready" : d.status,
       percent: d.status === "done" ? 100 : null,
@@ -678,7 +888,14 @@ function restoreQueue(): Download[] {
 // Earlier builds stored "stems2" (vocals + instrumental) and "stems4" (all four parts) as the quality.
 function legacyStems(d: Download): Partial<Download> {
   const quality = d.quality as string;
-  const fix: Partial<Download> = typeof (d.preset as unknown) === "string" ? { preset: null } : {};
+  const preset = d.preset as unknown;
+  // Earlier builds stored the parts themselves, or a quality name, as the preset.
+  const fix: Partial<Download> =
+    typeof preset === "string"
+      ? { preset: null }
+      : preset && typeof preset === "object" && "parts" in preset
+        ? { preset: { stems: preset as StemsChoice } }
+        : {};
   if (quality === "stems2") return { ...fix, quality: "stems", stemParts: ["vocals"], stemRest: true };
   if (quality === "stems4") return { ...fix, quality: "stems", stemParts: ["vocals", "drums", "bass", "other"], stemRest: false };
   return fix;

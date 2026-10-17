@@ -38,6 +38,7 @@ import { OutputPanel } from "./OutputPanel";
 import { PlaylistDialog } from "./PlaylistDialog";
 import { QueueTable } from "./QueueTable";
 import { SettingsDialog } from "./SettingsDialog";
+import { CompressPicker } from "./CompressPicker";
 import { StemsDialog } from "./StemsDialog";
 import { StemsPicker } from "./StemsPicker";
 
@@ -231,6 +232,7 @@ export function Home() {
       {dragging && <div className={styles.drop}>Drop files to add them</div>}
       <PlaylistDialog />
       <StemsPicker />
+      <CompressPicker />
       <StemsDialog />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

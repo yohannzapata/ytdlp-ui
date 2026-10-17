@@ -2,6 +2,26 @@
 
 All notable changes to ytdlp-ui are listed here, newest first.
 
+## 0.5.0 - 2026-10-18
+
+### Added
+- **Compress.** Make any video or audio smaller: **up to a size** (10 MB fits Discord, or type any size), **half the
+  size**, or **same look, smaller file** for keeping. Choose **Compress…** in the Quality menu, or press the new
+  compress button on a finished row.
+- Sizes are hit reliably: two-pass encoding lands just under the target, the result is checked, and it's redone a
+  little lower if it ever comes out over.
+- The resolution and frame rate are chosen for you so a small file still looks clean (thresholds measured with
+  VMAF), and the dialog shows what you'll get before you start.
+- **Even smaller, with a newer format:** AV1, about 8 VMAF points better than H.264 at the same size in our tests.
+- "Same look" warns before you start when a file is already compact, and never keeps a result that isn't clearly
+  smaller.
+- **Separate or compress straight from a link.** Choose either on a pasted link and press Start: the row downloads
+  only what the job needs, works on it, and keeps just the result.
+
+### Changed
+- Phone videos stored sideways with a rotation flag are now treated as upright when shrinking them.
+- "Starting the separation…" is shown while the separation model loads, instead of "Reading the file…".
+
 ## 0.4.0 - 2026-10-03
 
 ### Added

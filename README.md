@@ -6,7 +6,7 @@
 
 **A simple, modern desktop app for [yt-dlp](https://github.com/yt-dlp/yt-dlp).**<br>
 Paste links, pick a quality for each, press Start. YouTube videos, playlists and music, plus 1000+ other sites.<br>
-Have files already? Drop them in to extract the audio, change the format, shrink them, or separate the vocals, drums and bass.
+Compress anything to fit Discord or email, or separate the vocals, drums and bass, straight from a link or from your own files.
 
 [![Latest release](https://img.shields.io/github/v/release/yohannzapata/ytdlp-ui?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/yohannzapata/ytdlp-ui/total?style=flat-square&color=0f6cbd)](https://github.com/yohannzapata/ytdlp-ui/releases)
@@ -23,7 +23,8 @@ Have files already? Drop them in to extract the audio, change the format, shrink
 yt-dlp is the best video downloader there is, but it lives in a terminal. ytdlp-ui puts a simple interface on top of
 it: a queue you can fill with links, an options panel for everything you would otherwise type as command-line
 flags, and none of yt-dlp's power taken away. Files you already have can go through the same queue, so one app
-covers getting media, converting it and, if you want, pulling it apart into vocals, drums, bass and more.
+covers getting media, converting it, making it smaller and, if you want, pulling it apart into vocals, drums, bass
+and more.
 
 - **Simple by default, complete when you need it.** Paste, choose, Start. Speed limit, subtitles, chapters,
   SponsorBlock, browser cookies and custom arguments are one glance away in the options panel.
@@ -53,8 +54,24 @@ covers getting media, converting it and, if you want, pulling it apart into voca
 - Songs keep their cover art, title and artist; **Even out volume** brings quiet files to a standard loudness
 - Your original file is never touched; the result is saved next to your downloads
 
+**Compress** (any video or audio, from a link or a file)
+- Choose **Compress…** in the Quality menu, or press the compress button on a finished row
+- **Up to a size:** 10 MB for Discord, or any size you type. It lands just under the size, every time: the video is
+  encoded in two passes, checked, and redone a little lower in the rare case it came out over
+- It picks the resolution for you: a small size on a long video looks far better at 480p than as a blocky 1080p,
+  and 60 fps comes down to 30 when room is tight. The dialog shows the result before you start ("about 9.8 MB ·
+  480p")
+- **Same look, smaller file:** for keeping. Phone and screen recordings usually come out three or four times
+  smaller and look the same. Files that are already compact (most downloads) are flagged before you start
+- **Half the size**, and an option for **even smaller files** with the newer AV1 format (slower to make, and some
+  older phones can't play it)
+
+**Straight from a link:** choose **Compress…** or **Separate audio…** on a link and press Start. The row downloads
+only what it needs (just the sound to separate, just the resolution it will end up at to compress), works on it, and
+keeps only the result.
+
 **Separate audio** (an optional add-on, any audio or video file)
-- Choose **Separate audio…** in a file's Quality menu, or press the split button on a finished row, then tick the
+- Choose **Separate audio…** in the Quality menu, or press the split button on a finished row, then tick the
   parts you want: **vocals, drums, bass, guitar, piano, other**. Each one is saved as its own file
 - Whatever you didn't tick can be saved as **one more file**: tick only Vocals to get a vocals file and an
   *instrumental*, or only Drums to get the drums and a *no drums* backing track
@@ -84,10 +101,11 @@ covers getting media, converting it and, if you want, pulling it apart into voca
 </div>
 
 <div align="center">
+<img src="docs/screenshots/compress.png" alt="Compressing a video to fit 100 MB: the dialog shows it will be about 97 MB at 480p and 30 fps" width="860">
 <img src="docs/screenshots/separate.png" alt="Choosing which parts of a song to save: vocals, drums, bass, guitar, piano or other" width="860">
 </div>
 
-<sub>The first screenshots show "Big Buck Bunny" and "Caminandes 3: Llamigos", (c) Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The last one shows two small test files.</sub>
+<sub>Screenshots show "Big Buck Bunny" and "Caminandes 3: Llamigos", (c) Blender Foundation, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/), and "Me at the zoo". The last one shows two small test files.</sub>
 
 ## Download
 
@@ -120,8 +138,8 @@ The source is right here and every release is built by GitHub Actions from this 
 
 1. Paste a video or playlist link (or press **Ctrl+V** anywhere). It appears in the list with its title and thumbnail.
 2. Pick the **quality** and **format** for each row. Adjust the options below if you like. To convert files you
-   already have, drop them on the window or press **Add files**; they use the same menus. To split the sound into
-   parts, choose **Separate audio…** in the Quality menu.
+   already have, drop them on the window or press **Add files**; they use the same menus. To make something smaller
+   or split its sound into parts, choose **Compress…** or **Separate audio…** in the Quality menu.
 3. Press **Start**. Open the file or its folder when it's done.
 
 Prefer no extra click? Turn on **Start downloads automatically** in Settings.
@@ -152,6 +170,12 @@ download from, and to GitHub to fetch yt-dlp, FFmpeg and Deno (on macOS, FFmpeg 
 downloads the uv installer and a private Python from GitHub, the Python packages from PyPI and pytorch.org, and the
 separation models from Hugging Face (Meta's file server is the fallback), once. Your audio itself is never uploaded.
 
+**How small can Compress make a video, and how good will it look?** As small as you like, down to about 100 kbps
+(the dialog tells you the least that works for that length). How good it looks depends on the size per minute:
+10 MB is plenty for a short clip, and makes a 2.5-minute video a clean 480p. Measured with VMAF (100 is identical,
+6 points is about the least anyone notices): "same look" scored 97 against a phone recording at a third of its size,
+and the newer AV1 format scored about 8 points higher than H.264 at the same 10 MB. It all runs on your computer.
+
 **What is Separate audio, and what does it need?** It splits the sound of any audio or video file into vocals,
 drums, bass, guitar, piano and other sounds, using the open-source Demucs model. It needs a one-time download
 (about 0.8 GB; about 5 GB if you tick the NVIDIA option) into the app's own folder, and **Remove** in Settings
@@ -167,6 +191,8 @@ on the song, and guitar and piano are less exact than vocals, drums and bass.
   macOS it runs on the processor
 - **Separate audio** writes each part as an uncompressed file while it works, so a very long file (an hour or more)
   needs several GB of free space until it finishes
+- **Compress** keeps the first video and audio track only (subtitles and extra audio languages are dropped), and
+  doesn't keep HDR: HDR videos from newer phones come out as ordinary video and can look washed out
 
 ## Build from source
 
@@ -195,6 +221,7 @@ folder and is moved into place when it finishes, which is what makes canceling c
 | Downloading and updating yt-dlp, FFmpeg and Deno | [`src-tauri/src/tools.rs`](src-tauri/src/tools.rs) |
 | Running yt-dlp: info, options to arguments, downloads, progress, cancel | [`src-tauri/src/ytdlp.rs`](src-tauri/src/ytdlp.rs) |
 | Local files: reading them and converting with FFmpeg | [`src-tauri/src/media.rs`](src-tauri/src/media.rs) |
+| Compress: planning size, resolution and frame rate, two-pass encoding | [`src-tauri/src/compress.rs`](src-tauri/src/compress.rs) |
 | Separate audio: the optional Demucs add-on (private Python, install, separate) | [`src-tauri/src/stems.rs`](src-tauri/src/stems.rs) |
 | Settings and download options | [`src-tauri/src/settings.rs`](src-tauri/src/settings.rs) |
 | Typed calls from the UI to Rust | [`src/api.ts`](src/api.ts) |
